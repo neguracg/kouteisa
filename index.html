@@ -170,6 +170,20 @@
       <div class="note"><b>法令上の崖高：</b>静岡県建築基準条例第10条では、崖高 H は<b>崖下端を通る30度勾配線を超える部分の最高部までの高さ</b>（任意2点の差ではない）。<b>崖下端から水平距離 2H 以内</b>ががけ条例の<b>要対策範囲（2H影響ライン）</b>で、未対策では建築困難ですが、堅固な地盤・擁壁・深基礎・RC造等で安全と認められれば建築可能な場合があります（＝「建築不可」と断定しない）。<b>上端10m参考</b>＝がけ上で上端から10m以上離れれば安全とみなされ得る目安。敷地への掛かり具合は断面線を複数引いて判断します。</div>
     </div>
 
+    <div class="card">
+      <h2>4. 2H影響帯（敷地の使用可否）<span class="badge">最終成果</span></h2>
+      <div class="hint" style="margin-top:0">測線を崖に<b>直交</b>させて配置 → 敷地を崖面に投影し、幅1mごとに各断面の2H到達点を計算して <b>2H影響ライン（帯）</b> を描画。設計実務との誤差を見込み <b>レンジ</b> で表示します（点数が多く時間がかかります）。</div>
+      <div class="params" style="grid-template-columns:1fr 1fr;margin-top:8px">
+        <label>誤差レンジ(±%)<input id="pBandVar" type="number" step="1" value="15"></label>
+        <label>　<button class="primary" style="width:100%" onclick="generateBand()">2H影響帯を生成</button></label>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+        <button class="small" onclick="bandLayer.clearLayers();var r=document.getElementById('bandResult');r.style.display='none';r.textContent='';">帯を消去</button>
+        <span id="bandProg" class="muted" style="font-size:11px"></span>
+      </div>
+      <div class="note" id="bandResult" style="margin-top:8px;display:none"></div>
+    </div>
+
     <details class="card">
       <summary class="dsum">敷地（区画図トレース）／位置・角度・倍率の調整</summary>
       <div class="dcont">
@@ -276,6 +290,7 @@ L.control.layers(
 
 const siteLayer       = L.layerGroup().addTo(map);
 const siteHandleLayer = L.layerGroup().addTo(map);
+const bandLayer       = L.layerGroup().addTo(map);
 const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
@@ -520,6 +535,120 @@ function rotateSite(d){ siteAdj.rot=(siteAdj.rot+d); saveSiteAdj(); drawSite(); 
 function scaleSite(f){ siteAdj.scale=Math.max(0.05,Math.min(20,siteAdj.scale*f)); saveSiteAdj(); drawSite(); }
 function resetSiteAdj(){ siteAdj=defaultAdj(); saveSiteAdj(); drawSite(); map.panTo([siteAdj.lat,siteAdj.lon]); }
 
+/* ====== 2H影響帯（敷地×崖、1m刻み・レンジ） ====== */
+async function sampleSectionLL(A,B,step){
+  const total=haversine(A,B); const n=Math.max(2,Math.floor(total/step));
+  const pts=[];
+  for(let i=0;i<=n;i++){const f=Math.min(1,(i*step)/total);pts.push({dist:f*total,lat:A.lat+(B.lat-A.lat)*f,lon:A.lon+(B.lon-A.lon)*f});}
+  let idx=0; const CONC=8;
+  const run=async()=>{let i;while((i=idx++)<pts.length){pts[i].elev=await fetchOne(pts[i].lat,pts[i].lon);}};
+  await Promise.all(Array.from({length:CONC},run));
+  return pts.filter(p=>p.elev!=null);
+}
+function pointInPoly(e,n,poly){ // poly: [{e,n}]
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].e,yi=poly[i].n,xj=poly[j].e,yj=poly[j].n;
+    if(((yi>n)!==(yj>n)) && (e<(xj-xi)*(n-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+async function generateBand(){
+  if(siteLatLngs.length<3){alert('先に敷地を配置してください。');return;}
+  const A=POINTS.top, B=POINTS.bottom;
+  const total=haversine(A,B);
+  if(total<5){alert('測線が短すぎます。崖を横断するように測線を引いてください。');return;}
+  const mul=parseFloat(document.getElementById('pMul').value)||2;
+  const varPct=Math.max(0,parseFloat(document.getElementById('pBandVar').value)||15)/100;
+  const sampleStep=Math.max(0.5,parseFloat(document.getElementById('pStep').value)||0.5);
+  const stripStep=1.0;
+  const ref={lat:A.lat,lon:A.lon}, mLat=111320, mLon=111320*Math.cos(rad(ref.lat));
+  const toEN=p=>({e:(p.lon-ref.lon)*mLon, n:(p.lat-ref.lat)*mLat});
+  const toLL=(e,n)=>({lat:ref.lat+n/mLat, lon:ref.lon+e/mLon});
+  const Aen=toEN(A), Ben=toEN(B);
+  let dE=Ben.e-Aen.e, dN=Ben.n-Aen.n; const L=Math.hypot(dE,dN)||1; dE/=L; dN/=L;
+  const Fe=-dN, Fn=dE;                       // 崖面方向（測線に直交）
+  const sEN=siteLatLngs.map(toEN);
+  const projs=sEN.map(p=>(p.e-Aen.e)*Fe+(p.n-Aen.n)*Fn);
+  const smin=Math.min(...projs), smax=Math.max(...projs);
+  const nStrip=Math.floor((smax-smin)/stripStep);
+  if(nStrip>70 && !confirm(`帯 ${nStrip+1} 本を生成します。標高取得に時間がかかります。続行しますか？`)) return;
+  const prog=document.getElementById('bandProg');
+  bandLayer.clearLayers();
+  const strips=[]; let cnt=0;
+  for(let s=smin; s<=smax+1e-6; s+=stripStep){
+    const startLL=toLL(Aen.e+s*Fe, Aen.n+s*Fn);
+    const endLL  =toLL(Ben.e+s*Fe, Ben.n+s*Fn);
+    const samples=await sampleSectionLL(startLL,endLL,sampleStep);
+    const det=detectCore(samples);
+    cnt++; if(prog) prog.textContent=`生成中 ${cnt}/${nStrip+1} 本`;
+    if((det.status==='ok'||det.status==='short') && det.baseK!=null){
+      const base=samples[det.P[det.baseK].si], crest=samples[det.P[det.qK].si];
+      const H=crest.elev-base.elev, brng=bearingRad(base,crest);
+      strips.push({
+        s, H,
+        base:{lat:base.lat,lon:base.lon},
+        baseEN:toEN(base), up:{e:Math.sin(brng),n:Math.cos(brng)},
+        reach:destination(base,brng,mul*H),
+        reachMin:destination(base,brng,mul*H*(1-varPct)),
+        reachMax:destination(base,brng,mul*H*(1+varPct))
+      });
+    }
+  }
+  if(prog) prog.textContent=`完了：${strips.length}/${nStrip+1} 本で崖を検出`;
+  drawBand(strips);
+  reportUsable(strips, sEN, toEN, mul, varPct, smin, stripStep);
+}
+function drawBand(strips){
+  bandLayer.clearLayers();
+  if(strips.length<2) return;
+  const baseLine=strips.map(s=>[s.base.lat,s.base.lon]);
+  const reachLine=strips.map(s=>[s.reach.lat,s.reach.lon]);
+  const minLine=strips.map(s=>[s.reachMin.lat,s.reachMin.lon]);
+  const maxLine=strips.map(s=>[s.reachMax.lat,s.reachMax.lon]);
+  L.polygon(baseLine.concat(reachLine.slice().reverse()),{stroke:false,fillColor:'#ff3b6b',fillOpacity:.10}).addTo(bandLayer);
+  L.polygon(minLine.concat(maxLine.slice().reverse()),{stroke:false,fillColor:'#ff3b6b',fillOpacity:.28}).addTo(bandLayer);
+  L.polyline(baseLine,{color:'#ffb020',weight:2}).addTo(bandLayer).bindTooltip('崖下端ライン',{sticky:true});
+  L.polyline(reachLine,{color:'#ff3b6b',weight:3}).addTo(bandLayer).bindTooltip('2H影響ライン（中心）',{sticky:true});
+  L.polyline(minLine,{color:'#ff8da0',weight:1,dashArray:'4,3'}).addTo(bandLayer);
+  L.polyline(maxLine,{color:'#ff8da0',weight:1,dashArray:'4,3'}).addTo(bandLayer).bindTooltip('2H影響ライン レンジ（±）',{sticky:true});
+}
+function reportUsable(strips, sEN, toEN, mul, varPct, smin, stripStep){
+  const el=document.getElementById('bandResult');
+  if(strips.length<2){ el.style.display='block'; el.innerHTML='崖を検出できた帯が不足。測線を崖に直交・崖を横断するよう調整してください。'; return; }
+  // 崖面方向 F（generateBandと同じ）を strips から再構成せず、敷地bbox格子で判定
+  let eMin=Math.min(...sEN.map(p=>p.e)), eMax=Math.max(...sEN.map(p=>p.e));
+  let nMin=Math.min(...sEN.map(p=>p.n)), nMax=Math.max(...sEN.map(p=>p.n));
+  // F方向: stripsのbaseENとsから復元
+  // up方向と base は strip ごと。cellの s' を求めるため F が必要 → strips間隔から近似
+  const F={e:(strips[1].baseEN.e-strips[0].baseEN.e), n:(strips[1].baseEN.n-strips[0].baseEN.n)};
+  const fl=Math.hypot(F.e,F.n)||1; F.e/=fl; F.n/=fl;
+  const s0=strips[0].s;
+  let total=0, usable=0, usableMin=0, usableMax=0;
+  for(let e=eMin; e<=eMax; e+=1){
+    for(let n=nMin; n<=nMax; n+=1){
+      if(!pointInPoly(e+0.5,n+0.5,sEN)) continue;
+      total++;
+      const sCell=(e+0.5-strips[0].baseEN.e)*F.e + (n+0.5-strips[0].baseEN.n)*F.n + s0;
+      let k=Math.round((sCell-s0)/stripStep); k=Math.max(0,Math.min(strips.length-1,k));
+      const st=strips[k];
+      const alongUp=(e+0.5-st.baseEN.e)*st.up.e + (n+0.5-st.baseEN.n)*st.up.n;
+      const twoH=mul*st.H;
+      if(alongUp>=twoH) usable++;
+      if(alongUp>=twoH*(1+varPct)) usableMax++;   // 保守的（影響大）→使用可少
+      if(alongUp>=twoH*(1-varPct)) usableMin++;    // 楽観的（影響小）→使用可多
+    }
+  }
+  const area=polygonArea(siteLatLngs);
+  const f=x=>x.toFixed(0);
+  el.style.display='block';
+  el.innerHTML=
+    `<b>敷地 約${f(area)}㎡</b> のうち（格子1m概算・崖面投影）<br>`+
+    `使用可能（2H影響の外）：<b>約${f(usable)}㎡</b>　レンジ <b>${f(usableMax)}–${f(usableMin)}㎡</b>（±${Math.round(varPct*100)}%）<br>`+
+    `2H影響内（要対策・要協議）：約${f(total-usable)}㎡<br>`+
+    `<span class="src">赤帯＝2H影響ラインのレンジ。崖検出${strips.length}断面の包絡。測線方向・敷地配置・DEM誤差により変動。正式判断は実測断面図・設計者・行政協議。</span>`;
+}
+
 /* ====== 断面で指定した崖（高い方=上端） ====== */
 function getCliff(){
   if(picks.length<2) return null;
@@ -543,7 +672,8 @@ function drawCliff(){
   const brng=bearingRad(c.bottom,c.top);                 // 崖下端→崖上方向（崖下端からの水平距離2Hを測る向き）
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round'}).addTo(cliffLayer);
-  makeLabel(cliffLayer,L.latLng(endP.lat,endP.lon),`⚠ 2H影響ライン（要対策範囲）2H=${twoH.toFixed(1)}m`,'#ff3b6b',true,'#fff');
+  L.circleMarker([endP.lat,endP.lon],{radius:7,color:'#fff',weight:2,fillColor:'#ff3b6b',fillOpacity:1}).addTo(cliffLayer);
+  makeLabel(cliffLayer,L.latLng(endP.lat,endP.lon),`⚠ 2H影響ライン到達点（要対策範囲端）2H=${twoH.toFixed(1)}m`,'#ff3b6b',true,'#fff');
   // 上端10m参考ライン（がけ上建築の安全みなし目安）：崖上端から崖と反対側へ
   const p10=parseFloat(document.getElementById('p10').value)||10;
   const upAway=destination(c.top,brng,p10);
@@ -563,6 +693,7 @@ function confirmCliff(){
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.top.lat,c.top.lon],[c.bottom.lat,c.bottom.lon]],{color:'#ffb020',weight:3,opacity:.85}).addTo(confirmedLayer);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round',opacity:.95}).addTo(confirmedLayer);
+  L.circleMarker([endP.lat,endP.lon],{radius:6,color:'#fff',weight:2,fillColor:'#ff3b6b',fillOpacity:1}).addTo(confirmedLayer);
   L.marker([c.bottom.lat,c.bottom.lon],{icon:L.divIcon({html:`<div class="numlbl">${idx}</div>`,className:'maplbl-wrap',iconSize:[18,18],iconAnchor:[9,9]}),zIndexOffset:900}).addTo(confirmedLayer);
   confirmedCliffs.push({top:{...c.top},bottom:{...c.bottom},H:c.H,twoH});
   updateConfirmedInfo();
@@ -677,7 +808,8 @@ function copySummary(){
 }
 function resetAll(){
   picks=[]; SAMPLES=[]; clearConfirmed();
-  cliffLayer.clearLayers();
+  cliffLayer.clearLayers(); bandLayer.clearLayers();
+  const br=document.getElementById('bandResult'); if(br){br.style.display='none';br.textContent='';}
   drawChart(); updateReadout(); recompute();
 }
 ['pH','pMul','p10'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{recompute();drawCliff();}));
@@ -699,19 +831,20 @@ function smoothSeries(z,win){
   return r;
 }
 /* 崖下端=u(x)の有効局所最小、崖上端=その先の有効局所最大、H=一体区間の最高部−下端 */
-function detectCliff(){
-  const n=SAMPLES.length;
+function detectCliff(){ return detectCore(SAMPLES); }
+function detectCore(samples){
+  const n=samples.length;
   if(n<5) return {status:'few'};
   const thA=parseFloat(document.getElementById('pAng').value)||30;
   const thH=parseFloat(document.getElementById('pH').value)||2;
   const winM=Math.max(0.5,parseFloat(document.getElementById('pWin').value)||2);
   const m=Math.tan(rad(thA));
-  const step=(SAMPLES[n-1].dist-SAMPLES[0].dist)/(n-1)||0.5;
-  const zS=smoothSeries(SAMPLES.map(p=>p.elev), Math.max(1,Math.round(winM/step))*2+1);
+  const step=(samples[n-1].dist-samples[0].dist)/(n-1)||0.5;
+  const zS=smoothSeries(samples.map(p=>p.elev), Math.max(1,Math.round(winM/step))*2+1);
   const lowAtStart = zS[0] <= zS[n-1];
   const order = lowAtStart ? [...Array(n).keys()] : [...Array(n).keys()].reverse();
-  const dref = SAMPLES[order[0]].dist;
-  const P = order.map(si=>{const x=Math.abs(SAMPLES[si].dist-dref), z=zS[si]; return {si,x,z,u:z-m*x};});
+  const dref = samples[order[0]].dist;
+  const P = order.map(si=>{const x=Math.abs(samples[si].dist-dref), z=zS[si]; return {si,x,z,u:z-m*x};});
   const N=P.length;
   const epsU=0.20, epsZ=0.20, minRun=1.0, lmWinM=2.0, mergeGap=1.0;
   const win=(k,wm)=>{let a=k,b=k;while(a>0&&P[k].x-P[a-1].x<wm)a--;while(b<N-1&&P[b+1].x-P[k].x<wm)b++;return[a,b];};
