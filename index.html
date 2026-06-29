@@ -124,8 +124,27 @@
     </div>
 
     <div class="card">
-      <h2>1.5 敷地（区画）＝固定配置</h2>
-      <div class="hint" style="margin-top:0">区画図の形状を登記面積 526㎡ にスケールし、地図上へ概算配置しています（固定）。緑のポリゴンが敷地です。位置・向きがズレている場合は調整方法を検討します。</div>
+      <h2>1.5 敷地（区画図トレース）</h2>
+      <div class="hint" style="margin-top:0">区画図(全体区画図.png)の緑部分を抽出して配置。「敷地を調整」で位置・角度・倍率を合わせ込めます（変更はこのブラウザに自動保存され、次回も同じ配置で表示）。</div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button class="small primary" id="siteAdjBtn" onclick="toggleAdjust()">敷地を調整</button>
+        <button class="small" onclick="resetSiteAdj()">配置リセット</button>
+      </div>
+      <div id="siteCtrl" style="display:none;margin-top:8px">
+        <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+          <span class="muted" style="font-size:11px">角度</span>
+          <button class="small" onclick="rotateSite(-5)">⟲5°</button>
+          <button class="small" onclick="rotateSite(-1)">−1°</button>
+          <button class="small" onclick="rotateSite(1)">+1°</button>
+          <button class="small" onclick="rotateSite(5)">⟳5°</button>
+          <span class="muted" style="font-size:11px;margin-left:4px">倍率</span>
+          <button class="small" onclick="scaleSite(1/1.05)">−5%</button>
+          <button class="small" onclick="scaleSite(1/1.01)">−1%</button>
+          <button class="small" onclick="scaleSite(1.01)">+1%</button>
+          <button class="small" onclick="scaleSite(1.05)">+5%</button>
+        </div>
+        <div class="hint" style="margin-top:6px">地図上の<b>白い○（中心ハンドル）</b>をドラッグで移動。角度・倍率はボタンで調整。</div>
+      </div>
       <div class="note" id="siteArea" style="margin-top:8px">敷地ポリゴンを配置中…</div>
     </div>
 
@@ -227,7 +246,8 @@ L.control.layers(
   {collapsed:false}
 ).addTo(map);
 
-const siteLayer     = L.layerGroup().addTo(map);
+const siteLayer       = L.layerGroup().addTo(map);
+const siteHandleLayer = L.layerGroup().addTo(map);
 const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
@@ -395,38 +415,64 @@ function polygonArea(pts){
   return Math.abs(a*R*R/2);
 }
 const SITE = {
-  anchor:{lat:35.0931148, lon:138.9555981}, // 敷地側ポイント＝重心の目安
-  rotationDeg: 0,        // 北上＝0。時計回りに+
-  targetArea: 526,       // ㎡（登記）
-  // 区画図の概形（x=東, y=北 の相対座標。スケールは後で526㎡に合わせる）
-  shape: [
-    [  15, 138],[ 130,  80],[ 170,  -5],[ 140, -50],[ 140, -85],
-    [   0,-100],[-120, -95],[-150,  -5],[ -65,  80]
-  ]
+  anchor:{lat:35.0931148, lon:138.9555981}, // 既定の重心位置
+  targetArea: 526,       // ㎡（登記）＝倍率1.0のときの面積
+  // 区画図(全体区画図.png)の緑部分をトレースした形状（x=東, y=北 の相対px）
+  shape: [[-22.6,131.1],[14.4,131.1],[67.4,103.1],[117.4,51.1],[144.4,38.1],[155.4,-10.9],[27.4,-35.9],[23.4,-42.9],[27.4,-43.9],[34.4,-80.9],[34.4,-102.9],[-139.6,-138.9],[-160.6,-138.9],[-205.6,-88.9],[-93.6,99.1],[-23.6,130.1]]
 };
+/* 調整パラメータ（localStorageに保存） */
+const SITE_KEY='kouteisa_site_adjust';
+function defaultAdj(){return {lat:SITE.anchor.lat,lon:SITE.anchor.lon,rot:0,scale:1};}
+function loadSiteAdj(){try{const j=JSON.parse(localStorage.getItem(SITE_KEY));return (j&&j.lat)?j:defaultAdj();}catch(e){return defaultAdj();}}
+function saveSiteAdj(){try{localStorage.setItem(SITE_KEY,JSON.stringify(siteAdj));}catch(e){}}
+let siteAdj=loadSiteAdj();
 let siteLatLngs=[];
+let siteAdjustMode=false;
+
 function buildSite(){
   const sh=SITE.shape.map(p=>({x:p[0],y:p[1]}));
   const cx=sh.reduce((s,p)=>s+p.x,0)/sh.length, cy=sh.reduce((s,p)=>s+p.y,0)/sh.length;
   sh.forEach(p=>{p.x-=cx;p.y-=cy;});
   let a0=0; for(let i=0;i<sh.length;i++){const p=sh[i],q=sh[(i+1)%sh.length];a0+=p.x*q.y-q.x*p.y;} a0=Math.abs(a0/2);
-  const s=Math.sqrt(SITE.targetArea/a0), r=rad(SITE.rotationDeg), cr=Math.cos(r), sr=Math.sin(r);
-  const lat0=SITE.anchor.lat, lon0=SITE.anchor.lon;
+  const s=Math.sqrt(SITE.targetArea/a0)*siteAdj.scale, r=rad(siteAdj.rot), cr=Math.cos(r), sr=Math.sin(r);
+  const lat0=siteAdj.lat, lon0=siteAdj.lon;
   const mLat=111320, mLon=111320*Math.cos(rad(lat0));
   return sh.map(p=>{
     const x=p.x*s, y=p.y*s, xr=x*cr-y*sr, yr=x*sr+y*cr;
     return {lat:lat0+yr/mLat, lon:lon0+xr/mLon};
   });
 }
-function drawFixedSite(){
+function redrawSitePolygon(){
   siteLayer.clearLayers();
   siteLatLngs=buildSite();
-  const ll=siteLatLngs.map(p=>[p.lat,p.lon]);
-  L.polygon(ll,{color:COL.site,weight:2,fillColor:COL.site,fillOpacity:.18}).addTo(siteLayer)
-    .bindTooltip(`敷地 約${polygonArea(siteLatLngs).toFixed(0)}㎡（159.11坪）※概算配置`,{sticky:true});
-  const el=document.getElementById('siteArea');
-  if(el) el.textContent=`配置面積 約${polygonArea(siteLatLngs).toFixed(0)}㎡ / ${(polygonArea(siteLatLngs)/3.305785).toFixed(1)}坪（登記526㎡＝159.11坪に合わせて固定配置）`;
+  L.polygon(siteLatLngs.map(p=>[p.lat,p.lon]),{color:COL.site,weight:2,fillColor:COL.site,fillOpacity:siteAdjustMode?.28:.18}).addTo(siteLayer)
+    .bindTooltip(`敷地（区画図トレース）約${polygonArea(siteLatLngs).toFixed(0)}㎡`,{sticky:true});
+  updateSiteReadout();
 }
+function redrawSiteHandles(){
+  siteHandleLayer.clearLayers();
+  if(!siteAdjustMode) return;
+  const html=`<div style="width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.5);border:3px solid ${COL.site};box-shadow:0 0 5px #000;cursor:move"></div>`;
+  const h=L.marker([siteAdj.lat,siteAdj.lon],{icon:L.divIcon({html,className:'dot-icon',iconSize:[20,20],iconAnchor:[10,10]}),draggable:true,autoPan:true,zIndexOffset:2000}).addTo(siteHandleLayer);
+  h.bindTooltip('ドラッグで敷地を移動',{direction:'top',offset:[0,-10]});
+  h.on('drag',e=>{const ll=e.target.getLatLng();siteAdj.lat=ll.lat;siteAdj.lon=ll.lng;redrawSitePolygon();});
+  h.on('dragend',saveSiteAdj);
+}
+function drawSite(){ redrawSitePolygon(); redrawSiteHandles(); }
+function updateSiteReadout(){
+  const el=document.getElementById('siteArea'); if(!el) return;
+  const a=polygonArea(siteLatLngs);
+  el.textContent=`敷地：約${a.toFixed(0)}㎡（${(a/3.305785).toFixed(1)}坪）／ 倍率 ${siteAdj.scale.toFixed(2)}・角度 ${Math.round(siteAdj.rot)}°　${siteAdjustMode?'※調整中（自動保存）':''}`;
+}
+function toggleAdjust(){
+  siteAdjustMode=!siteAdjustMode;
+  document.getElementById('siteAdjBtn').textContent=siteAdjustMode?'調整を終了':'敷地を調整';
+  document.getElementById('siteCtrl').style.display=siteAdjustMode?'block':'none';
+  drawSite();
+}
+function rotateSite(d){ siteAdj.rot=(siteAdj.rot+d); saveSiteAdj(); drawSite(); }
+function scaleSite(f){ siteAdj.scale=Math.max(0.05,Math.min(20,siteAdj.scale*f)); saveSiteAdj(); drawSite(); }
+function resetSiteAdj(){ siteAdj=defaultAdj(); saveSiteAdj(); drawSite(); map.panTo([siteAdj.lat,siteAdj.lon]); }
 
 /* ====== 断面で指定した崖（高い方=上端） ====== */
 function getCliff(){
@@ -804,7 +850,7 @@ document.getElementById('chart').addEventListener('click',ev=>{
 });
 
 /* ====== 初期化 ====== */
-drawFixedSite();
+drawSite();
 ['top','bottom'].forEach(k=>setPoint(k,POINTS[k].lat,POINTS[k].lon,false));
 fetchElev('top'); fetchElev('bottom');
 recompute();
