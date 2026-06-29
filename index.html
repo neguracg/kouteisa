@@ -123,6 +123,16 @@
     </div>
 
     <div class="card">
+      <h2>1.5 敷地（区画）をなぞる</h2>
+      <div class="hint" style="margin-top:0">モードで「<b>敷地をなぞる</b>」を選び、航空写真などを下敷きに敷地の角を順にクリック。頂点はドラッグで微調整でき、面積が登記の526㎡に合うよう合わせ込みます。</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="small" onclick="undoSite()">一つ戻す</button>
+        <button class="small" onclick="clearSite()">敷地クリア</button>
+      </div>
+      <div class="note" id="siteArea" style="margin-top:8px">頂点を3つ以上クリックすると面積を表示（登記 526㎡）　頂点0</div>
+    </div>
+
+    <div class="card">
       <h2>2. 各点の座標・標高</h2>
       <div id="points"></div>
       <div style="margin-top:6px">
@@ -190,19 +200,22 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
   integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
+/* ====== 配色（地図・断面図で共通） ====== */
+const COL = { start:"#19c37d", end:"#e879f9", top:"#ffb020", bottom:"#38bdf8", site:"#2ecc71" };
+
 /* ====== 測線の点 ====== */
 const POINTS = {
-  top:   {name:"測線 始点(上側)", color:"#ffd27f", lat:35.0931148, lon:138.9555981, elev:null},
-  bottom:{name:"測線 終点(下側)", color:"#8fd0ff", lat:35.0935590, lon:138.9552146, elev:null},
+  top:   {name:"断面図 始点(上側)", color:COL.start, lat:35.0931148, lon:138.9555981, elev:null},
+  bottom:{name:"断面図 終点(下側)", color:COL.end,   lat:35.0935590, lon:138.9552146, elev:null},
 };
 let mode = "top";
 
 /* ====== 地図 ====== */
-const map = L.map('map').setView([35.0933, 138.9554], 18);
-const std   = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:18,attribution:"地理院タイル"});
-const photo = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',{maxZoom:18,attribution:"地理院タイル"});
-const hill  = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',{maxZoom:16,opacity:.8,attribution:"地理院タイル"});
-const relief= L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png',{maxZoom:15,opacity:.7,attribution:"地理院タイル"});
+const map = L.map('map',{maxZoom:22}).setView([35.0933, 138.9554], 19);
+const std   = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxNativeZoom:18,maxZoom:22,attribution:"地理院タイル"});
+const photo = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',{maxNativeZoom:18,maxZoom:22,attribution:"地理院タイル"});
+const hill  = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',{maxNativeZoom:16,maxZoom:22,opacity:.8,attribution:"地理院タイル"});
+const relief= L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png',{maxNativeZoom:15,maxZoom:22,opacity:.7,attribution:"地理院タイル"});
 std.addTo(map);
 L.control.layers(
   {"標準地図":std,"航空写真":photo},
@@ -210,20 +223,34 @@ L.control.layers(
   {collapsed:false}
 ).addTo(map);
 
+const siteLayer     = L.layerGroup().addTo(map);
 const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
 
-map.on('click', e => setPoint(mode, e.latlng.lat, e.latlng.lng, true));
+map.on('click', e => {
+  if(mode==='site'){ addSiteVertex(e.latlng.lat, e.latlng.lng); }
+  else setPoint(mode, e.latlng.lat, e.latlng.lng, true);
+});
+map.on('dblclick', e => { if(mode==='site') L.DomEvent.stop(e); });
 
 /* ====== モードボタン ====== */
 const modesEl = document.getElementById('modes');
-Object.entries(POINTS).forEach(([k,p])=>{
+const MODEDEF = [
+  ['top',    POINTS.top.color,    POINTS.top.name],
+  ['bottom', POINTS.bottom.color, POINTS.bottom.name],
+  ['site',   COL.site,            '敷地をなぞる'],
+];
+MODEDEF.forEach(([k,color,name])=>{
   const b=document.createElement('div');
   b.className='mode'+(k===mode?' active':'');
   b.dataset.k=k;
-  b.innerHTML=`<span class="dot" style="background:${p.color}"></span>${p.name}`;
-  b.onclick=()=>{mode=k;[...modesEl.children].forEach(c=>c.classList.toggle('active',c.dataset.k===k));};
+  b.innerHTML=`<span class="dot" style="background:${color}"></span>${name}`;
+  b.onclick=()=>{
+    mode=k;
+    [...modesEl.children].forEach(c=>c.classList.toggle('active',c.dataset.k===k));
+    if(mode==='site') map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
+  };
   modesEl.appendChild(b);
 });
 
@@ -354,8 +381,41 @@ function drawMeasure(){
   L.polyline([[t.lat,t.lon],[b.lat,b.lon]],{color:'#9fb0c0',weight:2,dashArray:'6,5',opacity:.9}).addTo(measureLayer);
   makeDot(measureLayer,[t.lat,t.lon],t.color,true,ll=>setPoint('top',ll.lat,ll.lng,true));
   makeDot(measureLayer,[b.lat,b.lon],b.color,true,ll=>setPoint('bottom',ll.lat,ll.lng,true));
-  makeLabel(measureLayer,L.latLng(t.lat,t.lon),('始点'+(t.elev!=null?` ${t.elev}m`:'')),t.color,true);
-  makeLabel(measureLayer,L.latLng(b.lat,b.lon),('終点'+(b.elev!=null?` ${b.elev}m`:'')),b.color,true);
+  makeLabel(measureLayer,L.latLng(t.lat,t.lon),('断面図始点'+(t.elev!=null?` ${t.elev}m`:'')),t.color,true);
+  makeLabel(measureLayer,L.latLng(b.lat,b.lon),('断面図終点'+(b.elev!=null?` ${b.elev}m`:'')),b.color,true);
+}
+
+/* ====== 敷地（区画）のトレース ====== */
+let site=[];   // [{lat,lon}, ...]
+function polygonArea(pts){
+  if(pts.length<3) return 0;
+  const R=6378137; let a=0;
+  for(let i=0;i<pts.length;i++){
+    const p1=pts[i], p2=pts[(i+1)%pts.length];
+    a += rad(p2.lon-p1.lon)*(2+Math.sin(rad(p1.lat))+Math.sin(rad(p2.lat)));
+  }
+  return Math.abs(a*R*R/2);
+}
+function addSiteVertex(lat,lon){ site.push({lat:+(+lat).toFixed(7),lon:+(+lon).toFixed(7)}); drawSite(); }
+function undoSite(){ site.pop(); drawSite(); }
+function clearSite(){ site=[]; drawSite(); }
+function drawSite(){
+  siteLayer.clearLayers();
+  if(site.length>=2){
+    const latlngs=site.map(p=>[p.lat,p.lon]);
+    if(site.length>=3)
+      L.polygon(latlngs,{color:COL.site,weight:2,fillColor:COL.site,fillOpacity:.18}).addTo(siteLayer);
+    else
+      L.polyline(latlngs,{color:COL.site,weight:2}).addTo(siteLayer);
+  }
+  site.forEach((p,i)=>{
+    makeDot(siteLayer,[p.lat,p.lon],COL.site,true,ll=>{site[i]={lat:+ll.lat.toFixed(7),lon:+ll.lng.toFixed(7)};drawSite();});
+  });
+  const area=polygonArea(site);
+  const el=document.getElementById('siteArea');
+  if(el) el.textContent = site.length>=3
+    ? `面積 ${area.toFixed(1)} ㎡ / ${(area/3.305785).toFixed(2)} 坪　（登記 526㎡ ≒ 159.11坪）　頂点${site.length}`
+    : `頂点を3つ以上クリックすると面積を表示（登記 526㎡）　頂点${site.length}`;
 }
 
 /* ====== 断面で指定した崖（高い方=上端） ====== */
@@ -374,10 +434,10 @@ function drawCliff(){
   const mul=parseFloat(document.getElementById('pMul').value)||2;
   const twoH=mul*c.H;
   L.polyline([[c.top.lat,c.top.lon],[c.bottom.lat,c.bottom.lon]],{color:'#ffb020',weight:3}).addTo(cliffLayer);
-  makeDot(cliffLayer,[c.top.lat,c.top.lon],'#ffb020',false);
-  makeDot(cliffLayer,[c.bottom.lat,c.bottom.lon],'#3fa7ff',false);
-  makeLabel(cliffLayer,L.latLng(c.top.lat,c.top.lon),`崖上端 ${c.top.elev.toFixed(1)}m`,'#ffb020',true);
-  makeLabel(cliffLayer,L.latLng(c.bottom.lat,c.bottom.lon),`崖下端 ${c.bottom.elev.toFixed(1)}m`,'#3fa7ff',true);
+  makeDot(cliffLayer,[c.top.lat,c.top.lon],COL.top,false);
+  makeDot(cliffLayer,[c.bottom.lat,c.bottom.lon],COL.bottom,false);
+  makeLabel(cliffLayer,L.latLng(c.top.lat,c.top.lon),`崖上端 ${c.top.elev.toFixed(1)}m`,COL.top,true);
+  makeLabel(cliffLayer,L.latLng(c.bottom.lat,c.bottom.lon),`崖下端 ${c.bottom.elev.toFixed(1)}m`,COL.bottom,true);
   const brng=bearingRad(c.bottom,c.top);                 // 崖下端→崖上方向（崖下端からの水平距離2Hを測る向き）
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round'}).addTo(cliffLayer);
@@ -482,7 +542,7 @@ function copySummary(){
   }).catch(()=>document.execCommand('copy'));
 }
 function resetAll(){
-  picks=[]; SAMPLES=[]; clearConfirmed();
+  picks=[]; SAMPLES=[]; clearConfirmed(); clearSite();
   cliffLayer.clearLayers();
   drawChart(); updateReadout(); recompute();
 }
@@ -545,8 +605,14 @@ function drawChart(){
   let dA=`M ${X(0)} ${H-mb} `; SAMPLES.forEach(p=>dA+=`L ${X(p.dist)} ${Y(p.elev)} `); dA+=`L ${X(xmax)} ${H-mb} Z`;
   add('path',{d:dA,fill:'rgba(63,167,255,.15)'});
   add('path',{d:'M '+SAMPLES.map(p=>`${X(p.dist)} ${Y(p.elev)}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':2});
-  add('text',{x:(ml+W-mr)/2,y:H-3,'text-anchor':'middle'},'水平距離 (m)  左=始点(上側) / 右=終点(下側)');
+  add('text',{x:(ml+W-mr)/2,y:H-3,'text-anchor':'middle'},'水平距離 (m)  左=断面図始点 / 右=断面図終点');
   add('text',{x:13,y:H/2,'text-anchor':'middle',transform:`rotate(-90 13 ${H/2})`},'標高 (m)');
+  // 断面図 始点／終点（地図のアイコンと同色）
+  const s0=SAMPLES[0], s1=SAMPLES[SAMPLES.length-1];
+  add('circle',{cx:X(s0.dist),cy:Y(s0.elev),r:5,fill:COL.start,stroke:'#fff','stroke-width':1.5});
+  add('text',{x:X(s0.dist)+8,y:Y(s0.elev)-8,fill:COL.start,'font-weight':'bold'},'始点');
+  add('circle',{cx:X(s1.dist),cy:Y(s1.elev),r:5,fill:COL.end,stroke:'#fff','stroke-width':1.5});
+  add('text',{x:X(s1.dist)-8,y:Y(s1.elev)-8,'text-anchor':'end',fill:COL.end,'font-weight':'bold'},'終点');
   drawPicks();
 }
 
@@ -560,7 +626,7 @@ function drawPicks(){
   const hi = two?Math.max(picks[0].elev,picks[1].elev):null;
   picks.forEach((p,i)=>{
     const isTop = two && p.elev===hi;
-    const color = two ? (isTop?'#ffb020':'#3fa7ff') : '#e6edf3';
+    const color = two ? (isTop?COL.top:COL.bottom) : '#e6edf3';
     const lbl   = two ? (isTop?'崖上端':'崖下端') : (i===0?'①':'②');
     const x=SCAL.X(p.dist),y=SCAL.Y(p.elev);
     add('line',{x1:x,y1:SCAL.mt,x2:x,y2:SCAL.H-SCAL.mb,stroke:color,'stroke-width':1.5,'stroke-dasharray':'4,3'});
