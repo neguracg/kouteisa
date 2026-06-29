@@ -124,13 +124,9 @@
     </div>
 
     <div class="card">
-      <h2>1.5 敷地（区画）をなぞる</h2>
-      <div class="hint" style="margin-top:0">モードで「<b>敷地をなぞる</b>」を選び、航空写真などを下敷きに敷地の角を順にクリック。頂点はドラッグで微調整でき、面積が登記の526㎡に合うよう合わせ込みます。</div>
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <button class="small" onclick="undoSite()">一つ戻す</button>
-        <button class="small" onclick="clearSite()">敷地クリア</button>
-      </div>
-      <div class="note" id="siteArea" style="margin-top:8px">頂点を3つ以上クリックすると面積を表示（登記 526㎡）　頂点0</div>
+      <h2>1.5 敷地（区画）＝固定配置</h2>
+      <div class="hint" style="margin-top:0">区画図の形状を登記面積 526㎡ にスケールし、地図上へ概算配置しています（固定）。緑のポリゴンが敷地です。位置・向きがズレている場合は調整方法を検討します。</div>
+      <div class="note" id="siteArea" style="margin-top:8px">敷地ポリゴンを配置中…</div>
     </div>
 
     <div class="card">
@@ -236,18 +232,13 @@ const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
 
-map.on('click', e => {
-  if(mode==='site'){ addSiteVertex(e.latlng.lat, e.latlng.lng); }
-  else setPoint(mode, e.latlng.lat, e.latlng.lng, true);
-});
-map.on('dblclick', e => { if(mode==='site') L.DomEvent.stop(e); });
+map.on('click', e => setPoint(mode, e.latlng.lat, e.latlng.lng, true));
 
 /* ====== モードボタン ====== */
 const modesEl = document.getElementById('modes');
 const MODEDEF = [
   ['top',    POINTS.top.color,    POINTS.top.name],
   ['bottom', POINTS.bottom.color, POINTS.bottom.name],
-  ['site',   COL.site,            '敷地をなぞる'],
 ];
 MODEDEF.forEach(([k,color,name])=>{
   const b=document.createElement('div');
@@ -257,7 +248,6 @@ MODEDEF.forEach(([k,color,name])=>{
   b.onclick=()=>{
     mode=k;
     [...modesEl.children].forEach(c=>c.classList.toggle('active',c.dataset.k===k));
-    if(mode==='site') map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
   };
   modesEl.appendChild(b);
 });
@@ -393,8 +383,8 @@ function drawMeasure(){
   makeLabel(measureLayer,L.latLng(b.lat,b.lon),('断面図終点'+(b.elev!=null?` ${b.elev}m`:'')),b.color,true);
 }
 
-/* ====== 敷地（区画）のトレース ====== */
-let site=[];   // [{lat,lon}, ...]
+/* ====== 敷地（区画）＝固定配置 ======
+   区画図の形状を526㎡にスケールし、anchor周辺へ配置。位置/向きはこの定数で調整。 */
 function polygonArea(pts){
   if(pts.length<3) return 0;
   const R=6378137; let a=0;
@@ -404,26 +394,38 @@ function polygonArea(pts){
   }
   return Math.abs(a*R*R/2);
 }
-function addSiteVertex(lat,lon){ site.push({lat:+(+lat).toFixed(7),lon:+(+lon).toFixed(7)}); drawSite(); }
-function undoSite(){ site.pop(); drawSite(); }
-function clearSite(){ site=[]; drawSite(); }
-function drawSite(){
-  siteLayer.clearLayers();
-  if(site.length>=2){
-    const latlngs=site.map(p=>[p.lat,p.lon]);
-    if(site.length>=3)
-      L.polygon(latlngs,{color:COL.site,weight:2,fillColor:COL.site,fillOpacity:.18}).addTo(siteLayer);
-    else
-      L.polyline(latlngs,{color:COL.site,weight:2}).addTo(siteLayer);
-  }
-  site.forEach((p,i)=>{
-    makeDot(siteLayer,[p.lat,p.lon],COL.site,true,ll=>{site[i]={lat:+ll.lat.toFixed(7),lon:+ll.lng.toFixed(7)};drawSite();});
+const SITE = {
+  anchor:{lat:35.0931148, lon:138.9555981}, // 敷地側ポイント＝重心の目安
+  rotationDeg: 0,        // 北上＝0。時計回りに+
+  targetArea: 526,       // ㎡（登記）
+  // 区画図の概形（x=東, y=北 の相対座標。スケールは後で526㎡に合わせる）
+  shape: [
+    [  15, 138],[ 130,  80],[ 170,  -5],[ 140, -50],[ 140, -85],
+    [   0,-100],[-120, -95],[-150,  -5],[ -65,  80]
+  ]
+};
+let siteLatLngs=[];
+function buildSite(){
+  const sh=SITE.shape.map(p=>({x:p[0],y:p[1]}));
+  const cx=sh.reduce((s,p)=>s+p.x,0)/sh.length, cy=sh.reduce((s,p)=>s+p.y,0)/sh.length;
+  sh.forEach(p=>{p.x-=cx;p.y-=cy;});
+  let a0=0; for(let i=0;i<sh.length;i++){const p=sh[i],q=sh[(i+1)%sh.length];a0+=p.x*q.y-q.x*p.y;} a0=Math.abs(a0/2);
+  const s=Math.sqrt(SITE.targetArea/a0), r=rad(SITE.rotationDeg), cr=Math.cos(r), sr=Math.sin(r);
+  const lat0=SITE.anchor.lat, lon0=SITE.anchor.lon;
+  const mLat=111320, mLon=111320*Math.cos(rad(lat0));
+  return sh.map(p=>{
+    const x=p.x*s, y=p.y*s, xr=x*cr-y*sr, yr=x*sr+y*cr;
+    return {lat:lat0+yr/mLat, lon:lon0+xr/mLon};
   });
-  const area=polygonArea(site);
+}
+function drawFixedSite(){
+  siteLayer.clearLayers();
+  siteLatLngs=buildSite();
+  const ll=siteLatLngs.map(p=>[p.lat,p.lon]);
+  L.polygon(ll,{color:COL.site,weight:2,fillColor:COL.site,fillOpacity:.18}).addTo(siteLayer)
+    .bindTooltip(`敷地 約${polygonArea(siteLatLngs).toFixed(0)}㎡（159.11坪）※概算配置`,{sticky:true});
   const el=document.getElementById('siteArea');
-  if(el) el.textContent = site.length>=3
-    ? `面積 ${area.toFixed(1)} ㎡ / ${(area/3.305785).toFixed(2)} 坪　（登記 526㎡ ≒ 159.11坪）　頂点${site.length}`
-    : `頂点を3つ以上クリックすると面積を表示（登記 526㎡）　頂点${site.length}`;
+  if(el) el.textContent=`配置面積 約${polygonArea(siteLatLngs).toFixed(0)}㎡ / ${(polygonArea(siteLatLngs)/3.305785).toFixed(1)}坪（登記526㎡＝159.11坪に合わせて固定配置）`;
 }
 
 /* ====== 断面で指定した崖（高い方=上端） ====== */
@@ -577,7 +579,7 @@ function copySummary(){
   }).catch(()=>document.execCommand('copy'));
 }
 function resetAll(){
-  picks=[]; SAMPLES=[]; clearConfirmed(); clearSite();
+  picks=[]; SAMPLES=[]; clearConfirmed();
   cliffLayer.clearLayers();
   drawChart(); updateReadout(); recompute();
 }
@@ -802,6 +804,7 @@ document.getElementById('chart').addEventListener('click',ev=>{
 });
 
 /* ====== 初期化 ====== */
+drawFixedSite();
 ['top','bottom'].forEach(k=>setPoint(k,POINTS[k].lat,POINTS[k].lon,false));
 fetchElev('top'); fetchElev('bottom');
 recompute();
