@@ -101,7 +101,8 @@
       <div class="sec-head">
         <b>断面図</b><span class="muted">始点(上側)→終点(下側)</span>
         <span id="secProg" class="muted"></span>
-        <span class="muted">｜ グラフ上で<b>崖の上端</b>・<b>崖の下端</b>をクリック</span>
+        <span class="muted">｜ 崖下端・上端は<b>自動判定</b>（クリックで手動補正可）</span>
+        <button class="small" onclick="runAuto()">自動判定に戻す</button>
         <button class="small" onclick="clearPick()">選択クリア</button>
         <button class="small primary" onclick="confirmCliff()">この崖線を地図に確定（追加）</button>
         <span id="confCount" class="muted">確定 0 本</span>
@@ -160,11 +161,16 @@
         <label>がけ勾配閾値(°)<input id="pAng" type="number" step="1" value="30"></label>
         <label>離隔倍率(×H)<input id="pMul" type="number" step="0.5" value="2"></label>
       </div>
-      <div class="hint">正確な基準は自治体・条例で異なります（沼津＝静岡県建築基準条例）。最終判断は必ず行政・建築士へ。</div>
+      <div class="params" style="margin-top:8px">
+        <label>勾配判定窓(m)<input id="pWin" type="number" step="0.5" value="2"></label>
+        <label>緩斜面除外高(m)<input id="pExcl" type="number" step="0.5" value="5"></label>
+        <label>上端離隔参考(m)<input id="p10" type="number" step="1" value="10"></label>
+      </div>
+      <div class="hint">崖下端・崖上端・Hは<b>30度基準線</b>で自動判定します（静岡県建築基準条例第10条：がけ下端を通る30度線を超える部分の最高部までの高さ）。判定窓＝勾配を見る区間長、緩斜面除外高＝この高さ以下の局所緩斜面は一体のがけ扱い。最終判断は必ず行政・建築士へ。</div>
     </div>
 
     <div class="card results">
-      <h2>5. 概算結果（断面図で指定した崖上端・崖下端に基づく）</h2>
+      <h2>5. 概算結果（30度基準線による自動判定）</h2>
       <div class="big">
         <span class="k" style="color:var(--muted);font-size:12px">崖高 H</span>
         <span class="v" id="rH">–</span><span class="u">m</span>
@@ -173,10 +179,12 @@
         <div class="stat"><div class="k">崖上端 / 崖下端 標高</div><div class="v" id="rEdges">–</div></div>
         <div class="stat"><div class="k">水平距離（上端〜下端）</div><div class="v" id="rDx">–</div></div>
         <div class="stat"><div class="k">平均勾配（上端〜下端）</div><div class="v" id="rAng">–</div></div>
-        <div class="stat"><div class="k">建築不可ライン 2H = 倍率×H</div><div class="v" id="r2H">–</div></div>
+        <div class="stat"><div class="k">2H影響ライン（要対策範囲）</div><div class="v" id="r2H">–</div></div>
+        <div class="stat"><div class="k">信頼度ランク</div><div class="v" id="rConf">–</div></div>
+        <div class="stat"><div class="k">H感度（下端/上端±1〜3m）</div><div class="v" id="rSens">–</div></div>
       </div>
-      <div id="verdict" class="verdict warn">測線を配置 → 「断面図を作成」 → 断面図で崖の上端・下端をクリックしてください。</div>
-      <div class="note"><b>崖高の起点：</b>がけ条例では崖の高さ H は<b>崖下端を起点</b>に測り、建築制限は<b>崖下端からの水平距離 2H（＝高さの2倍）以内</b>。上側の敷地では崖下端から<b>崖上方向</b>へ水平 2H。地図の<b>赤い直線</b>がその「ここまで建てられない」目安です（円ではありません）。実際に敷地のどこまで掛かるかは、断面線を何本か引いて確定線を重ねて判断します。</div>
+      <div id="verdict" class="verdict warn">測線を配置 → 「断面図を作成」で、崖下端・崖上端・Hを自動判定します。</div>
+      <div class="note"><b>法令上の崖高：</b>静岡県建築基準条例第10条では、崖高 H は<b>崖下端を通る30度勾配線を超える部分の最高部までの高さ</b>（任意2点の差ではない）。<b>崖下端から水平距離 2H 以内</b>ががけ条例の<b>要対策範囲（2H影響ライン）</b>で、未対策では建築困難ですが、堅固な地盤・擁壁・深基礎・RC造等で安全と認められれば建築可能な場合があります（＝「建築不可」と断定しない）。<b>上端10m参考</b>＝がけ上で上端から10m以上離れれば安全とみなされ得る目安。敷地への掛かり具合は断面線を複数引いて判断します。</div>
     </div>
 
     <div class="card">
@@ -441,7 +449,12 @@ function drawCliff(){
   const brng=bearingRad(c.bottom,c.top);                 // 崖下端→崖上方向（崖下端からの水平距離2Hを測る向き）
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round'}).addTo(cliffLayer);
-  makeLabel(cliffLayer,L.latLng(endP.lat,endP.lon),`⛔ ここまで建築不可（目安） 2H=${twoH.toFixed(1)}m`,'#ff3b6b',true,'#fff');
+  makeLabel(cliffLayer,L.latLng(endP.lat,endP.lon),`⚠ 2H影響ライン（要対策範囲）2H=${twoH.toFixed(1)}m`,'#ff3b6b',true,'#fff');
+  // 上端10m参考ライン（がけ上建築の安全みなし目安）：崖上端から崖と反対側へ
+  const p10=parseFloat(document.getElementById('p10').value)||10;
+  const upAway=destination(c.top,brng,p10);
+  L.polyline([[c.top.lat,c.top.lon],[upAway.lat,upAway.lon]],{color:'#a06bff',weight:2,dashArray:'5,5'}).addTo(cliffLayer);
+  makeLabel(cliffLayer,L.latLng(upAway.lat,upAway.lon),`上端${p10}m参考`,'#a06bff',true,'#fff');
 }
 
 /* 崖線を地図に確定（複数本ためる） */
@@ -475,64 +488,86 @@ function updateResults(){
   const set=(id,v)=>document.getElementById(id).textContent=v;
   const vEl=document.getElementById('verdict');
   if(!c){
-    ['rH','rEdges','rDx','rAng','r2H'].forEach(id=>set(id,'–'));
+    ['rH','rEdges','rDx','rAng','r2H','rConf','rSens'].forEach(id=>set(id,'–'));
     vEl.className='verdict warn';
-    vEl.innerHTML='測線を配置 → 「断面図を作成」 → 断面図で<b>崖の上端・下端</b>をクリックすると判定が出ます。';
+    if(SAMPLES.length>2)
+      vEl.innerHTML='この断面では30度超・2m超のがけを自動抽出できませんでした。測線の向き・位置を見直すか、グラフをクリックして手動指定してください。';
+    else
+      vEl.innerHTML='測線を配置 → 「断面図を作成」で、崖下端・崖上端・H を自動判定します。';
     return;
   }
   const H=c.H, dx=Math.abs(c.top.dist-c.bottom.dist);
   const ang=dx>0?deg(Math.atan2(H,dx)):90;
   const twoH=mul*H;
+  const sens=sensitivity(c);
+  const conf=confidence(c,ang,sens);
   set('rH',H.toFixed(1));
   set('rEdges',`${c.top.elev.toFixed(1)} / ${c.bottom.elev.toFixed(1)} m`);
   set('rDx',dx.toFixed(1)+' m');
   set('rAng',ang.toFixed(1)+' °');
   set('r2H',twoH.toFixed(1)+' m');
+  set('rConf',conf.rank);
+  set('rSens',sens?`H ${sens.minH.toFixed(1)}–${sens.maxH.toFixed(1)}m / 2H ${sens.min2H.toFixed(0)}–${sens.max2H.toFixed(0)}m`:'–');
+  const modeTxt = cliffMode==='auto' ? '30度基準線による自動判定' : '手動補正';
+  let diffTxt='';
+  if(cliffMode==='manual' && autoDet){
+    const d=H-autoDet.H;
+    diffTxt = `　自動判定Hとの差 ${d>=0?'+':''}${d.toFixed(1)}m${Math.abs(d)>2?'（差が大きい：根拠を要確認）':''}`;
+  }
   const isCliff = H>thH && ang>thA;
   if(!isCliff){
     vEl.className='verdict ok';
-    vEl.innerHTML=`<b>がけ条例の「がけ」に該当しない可能性</b><br>崖高 ${H.toFixed(1)}m（閾値${thH}m）・勾配 ${ang.toFixed(1)}°（閾値${thA}°）。現地で要確認。`;
+    vEl.innerHTML=`<b>がけ条例の「がけ」に該当しない可能性（信頼度${conf.rank}）</b><br>崖高 ${H.toFixed(1)}m（閾値${thH}m）・勾配 ${ang.toFixed(1)}°（閾値${thA}°）。<br><span class="src">${modeTxt}${diffTxt}。${conf.why}</span>`;
   }else{
     vEl.className='verdict danger';
-    vEl.innerHTML=`<b>⚠ がけに該当の可能性</b><br>崖高 ${H.toFixed(1)}m・勾配 ${ang.toFixed(1)}° → がけ。<br>崖下端から<b>水平 ${twoH.toFixed(1)}m</b>（=2H）が建築制限の目安。地図の赤い直線がその範囲。<br>断面線を複数引いて「確定」で重ね、敷地のどこまで掛かるか確認してください。`;
+    vEl.innerHTML=`<b>⚠ がけに該当の可能性（信頼度${conf.rank}）</b><br>崖高H ${H.toFixed(1)}m・平均勾配 ${ang.toFixed(1)}° → 30度超・2m超でがけに該当。<br>崖下端から崖上方向へ水平 <b>${twoH.toFixed(1)}m</b> が<b>がけ条例 要対策範囲（2H影響ライン）</b>。未対策では建築困難で、擁壁・深基礎・RC造等の対策可否を行政・設計者と協議。<br><span class="src">${modeTxt}${diffTxt}。${conf.why} 敷地への掛かりは断面線を複数引いて確認。</span>`;
   }
 }
 
 function buildSummary(){
   const c=getCliff();
   const mul=parseFloat(document.getElementById('pMul').value)||2;
+  const p10=parseFloat(document.getElementById('p10').value)||10;
   const f=(x,d=1)=>x==null?'未取得':(+x).toFixed(d);
   let body;
   if(!c && confirmedCliffs.length===0){
-    body=`（断面図で崖上端・崖下端を指定すると、崖高・2H が入ります）`;
+    body=`（断面図を作成すると、崖下端・崖上端・H・2H影響ライン が自動判定で入ります）`;
   }else{
     const lines=[];
-    const list = confirmedCliffs.length? confirmedCliffs : [ (()=>{const dx=Math.abs(c.top.dist-c.bottom.dist);return {top:c.top,bottom:c.bottom,H:c.H,twoH:mul*c.H,dx};})() ];
+    const cur = c ? (()=>{const dx=Math.abs(c.top.dist-c.bottom.dist);const sens=sensitivity(c);const ang=dx>0?deg(Math.atan2(c.H,dx)):90;const conf=confidence(c,ang,sens);return {top:c.top,bottom:c.bottom,H:c.H,twoH:mul*c.H,dx,sens,conf};})() : null;
+    const list = confirmedCliffs.length? confirmedCliffs : (cur?[cur]:[]);
     list.forEach((x,i)=>{
       const dx=x.dx!=null?x.dx:Math.abs(x.top.dist-x.bottom.dist);
       const ang=dx>0?deg(Math.atan2(x.H,dx)):90;
+      const extra = x.sens?`\n  信頼度:${x.conf.rank} / H感度:${f(x.sens.minH)}–${f(x.sens.maxH)}m（2H ${f(x.sens.min2H,0)}–${f(x.sens.max2H,0)}m）`:'';
       lines.push(
-`断面${i+1}:
+`断面${i+1}（${confirmedCliffs.length?'確定':(cliffMode==='auto'?'自動判定':'手動補正')}）:
   崖上端 lat:${x.top.lat.toFixed(7)} lon:${x.top.lon.toFixed(7)} 標高:${f(x.top.elev)}m
   崖下端 lat:${x.bottom.lat.toFixed(7)} lon:${x.bottom.lon.toFixed(7)} 標高:${f(x.bottom.elev)}m
-  崖高H:${f(x.H)}m / 平均勾配:${f(ang)}° / 建築不可ライン2H:${f(x.twoH)}m（崖下端から崖上方向へ水平）`);
+  崖高H:${f(x.H)}m / 平均勾配:${f(ang)}° / 2H影響ライン:${f(x.twoH)}m（崖下端→崖上方向へ水平・要対策範囲）${extra}`);
     });
     body=lines.join('\n');
   }
   document.getElementById('summary').value=
-`【地理院地図・標高APIによる一次確認】
+`【国土地理院DEM・標高APIによる一次スクリーニング】
 取得日: ${new Date().toLocaleDateString('ja-JP')}
+使用データ: 国土地理院 標高API / 地理院タイル
+判定方式: 静岡県建築基準条例第10条に準拠（崖下端を通る30度勾配線を超える部分の最高部までをH）
 確定した崖線: ${confirmedCliffs.length} 本
 
 ${body}
 
-※ 崖の高さ H は崖下端を起点に測り、がけ条例の建築制限は
-   崖下端からの水平距離 2H（＝高さの2倍）以内。上側の敷地では
-   崖下端から崖上方向へ水平 2H の直線で示す。
-※ 敷地のどこまで掛かるかは、断面線を複数引いた直線の集合で判断する。
-※ 標高は国土地理院 標高APIの点の値、距離は地図上の概算。
-※ 正式判断には現地測量・断面図・擁壁の安全確認・建物配置図が必要。
-   沼津は静岡県建築基準条例の対象。最終判断は行政・建築士・沼津土木事務所へ。`;
+―― 行政・設計者への確認用 ――
+本資料は国土地理院DEMを用いた一次スクリーニングです。崖下端・上端・崖高H・2H影響範囲の
+概算を示しています。正式判断には、現地測量に基づく断面図、建物配置図、がけ形状・土質・
+既存擁壁等の安全性確認が必要です。本件について、静岡県建築基準条例第10条の適用有無、
+2H範囲内での建築可否、深基礎・杭・擁壁・防土壁等による対策可能性、がけ上の場合は上端${p10}m
+離隔での安全みなしの可否について、事前相談をお願いします。
+
+※ 「2H以内＝建築不可」ではなく、がけ条例上の要対策・要協議範囲。堅固な地盤・擁壁・
+   深基礎・RC造等で安全と認められれば建築可能な場合があります。
+※ H・上端・下端はDEMからの自動判定で、現地測量による確定が必要（信頼度ランク参照）。
+※ 窓口：沼津土木事務所 建築住宅課（函南町・清水町・長泉町・伊豆の国市等を管轄）。`;
 }
 
 function copySummary(){
@@ -546,11 +581,96 @@ function resetAll(){
   cliffLayer.clearLayers();
   drawChart(); updateReadout(); recompute();
 }
-['pH','pAng','pMul'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{recompute();drawCliff();}));
+['pH','pMul','p10'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{recompute();drawCliff();}));
+['pAng','pWin','pExcl'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{
+  if(SAMPLES.length>2 && cliffMode==='auto') runAuto(); else {recompute();drawCliff();}
+}));
 
 /* ====== 断面図 ====== */
 let SAMPLES=[], picks=[], SCAL=null;
+let cliffMode='auto';   // 'auto' | 'manual'
+let autoDet=null;       // 直近の自動判定 {base, top, H}
+let gapRatio=0;         // DEM欠測率
 function niceStep(x){const p=Math.pow(10,Math.floor(Math.log10(x||1)));const f=(x||1)/p;return (f<1.5?1:f<3.5?2:f<7.5?5:10)*p;}
+
+/* ====== 30度基準線による崖の自動判定 ====== */
+function smoothSeries(z,win){
+  const r=[],h=Math.floor(win/2);
+  for(let i=0;i<z.length;i++){let s=0,c=0;for(let j=i-h;j<=i+h;j++){if(j>=0&&j<z.length){s+=z[j];c++;}}r.push(s/c);}
+  return r;
+}
+function detectCliff(){
+  const n=SAMPLES.length; if(n<3) return null;
+  const thA=parseFloat(document.getElementById('pAng').value)||30;
+  const thH=parseFloat(document.getElementById('pH').value)||2;
+  const winM=Math.max(0.5,parseFloat(document.getElementById('pWin').value)||2);
+  const exclM=Math.max(0,parseFloat(document.getElementById('pExcl').value)||5);
+  const z=smoothSeries(SAMPLES.map(p=>p.elev), Math.max(1,Math.round(winM/((SAMPLES[n-1].dist-SAMPLES[0].dist)/(n-1)||0.5)))*2+1);
+  const lowAtStart = z[0] <= z[n-1];
+  const order = lowAtStart ? [...Array(n).keys()] : [...Array(n).keys()].reverse();
+  const dref = SAMPLES[order[0]].dist;
+  const P = order.map(si=>({si, d:Math.abs(SAMPLES[si].dist-dref), z:z[si]}));
+  const tanA=Math.tan(rad(thA)), tol=0.3;
+  const locSlope=(k)=>{
+    let a=k,b=k;
+    while(a>0 && P[k].d-P[a-1].d < winM/2) a--;
+    while(b<P.length-1 && P[b+1].d-P[k].d < winM/2) b++;
+    const dd=P[b].d-P[a].d; return dd<=0?0:Math.atan((P[b].z-P[a].z)/dd);
+  };
+  for(let k=0;k<P.length-1;k++){
+    if(locSlope(k) <= rad(thA)) continue;          // 30度超が始まる点
+    const zb=P[k].z, db=P[k].d;
+    let topZ=zb, topJ=k, j=k+1;
+    while(j<P.length){
+      const bl=zb+tanA*(P[j].d-db);                // 崖下端を通る30度基準線
+      if(P[j].z>=bl-tol){ if(P[j].z>topZ){topZ=P[j].z;topJ=j;} j++; }
+      else {                                       // ベンチ（緩斜面）か頂上か
+        let m=j+1, rec=false;
+        while(m<P.length && (topZ-P[m].z)<exclM){
+          const bm=zb+tanA*(P[m].d-db);
+          if(P[m].z>=bm-tol && P[m].z>topZ){rec=true;break;}
+          m++;
+        }
+        if(rec){ j=m; } else break;
+      }
+    }
+    if(topZ-zb>thH) return { base:SAMPLES[P[k].si], top:SAMPLES[P[topJ].si], H:topZ-zb };
+  }
+  return null;
+}
+function sampleToPick(s){return {dist:s.dist,elev:s.elev,lat:s.lat,lon:s.lon};}
+function runAuto(){
+  cliffMode='auto';
+  autoDet=detectCliff();
+  if(autoDet){ picks=[sampleToPick(autoDet.base), sampleToPick(autoDet.top)]; const c=getCliff(); if(c) autoDet.H=c.H; }
+  else picks=[];
+  drawChart(); updateReadout(); drawCliff(); recompute();
+}
+function elevAtDist(dist){
+  let near=SAMPLES[0],md=Infinity;
+  SAMPLES.forEach(p=>{const dd=Math.abs(p.dist-dist);if(dd<md){md=dd;near=p;}});
+  return near?near.elev:null;
+}
+function sensitivity(c){
+  if(!c||SAMPLES.length<3) return null;
+  const mul=parseFloat(document.getElementById('pMul').value)||2;
+  let minH=c.H,maxH=c.H;
+  [1,2,3].forEach(D=>{
+    [c.bottom.dist-D,c.bottom.dist+D].forEach(x=>{const h=Math.abs(c.top.elev-elevAtDist(x));minH=Math.min(minH,h);maxH=Math.max(maxH,h);});
+    [c.top.dist-D,c.top.dist+D].forEach(x=>{const h=Math.abs(elevAtDist(x)-c.bottom.elev);minH=Math.min(minH,h);maxH=Math.max(maxH,h);});
+  });
+  return {minH,maxH,min2H:mul*minH,max2H:mul*maxH};
+}
+function confidence(c,ang,sens){
+  const thH=parseFloat(document.getElementById('pH').value)||2;
+  const thA=parseFloat(document.getElementById('pAng').value)||30;
+  if(gapRatio>0.1||SAMPLES.length<5) return {rank:'D',why:'DEM欠測・有効点不足で判定困難。現地確認要。'};
+  const spread=sens?(sens.maxH-sens.minH):0, rel=c.H>0?spread/c.H:1;
+  if(c.H>2*thH && ang>thA+5 && spread<=Math.max(1,0.1*c.H)) return {rank:'A',why:'H・勾配とも基準を明確に超え、位置を多少動かしても結果がほぼ変わらない。'};
+  if(c.H>thH && ang>thA && rel<=0.25) return {rank:'B',why:'基準は超えるが上端・下端位置に数mの不確実性あり。'};
+  if(c.H>thH*0.8 && ang>thA-3) return {rank:'C',why:'H・勾配が基準付近。DEMでは判断困難、現地測量必須。'};
+  return {rank:'C',why:'基準付近またはばらつき大。現地確認要。'};
+}
 
 async function generateSection(){
   const t=POINTS.top,b=POINTS.bottom;
@@ -574,8 +694,9 @@ async function generateSection(){
   run.idx=0;
   await Promise.all(Array.from({length:CONC},run));
   SAMPLES=pts.filter(p=>p.elev!=null);
+  gapRatio = pts.length? 1-SAMPLES.length/pts.length : 0;
   prog.textContent=`${SAMPLES.length}/${pts.length}点（間隔${step}m・全長${total.toFixed(1)}m）`;
-  picks=[]; drawChart(); updateReadout(); drawCliff(); recompute();
+  runAuto();   // 30度基準線で崖下端・上端・Hを自動判定
 }
 
 function drawChart(){
@@ -641,17 +762,24 @@ function drawPicks(){
     add('line',{x1:SCAL.X(b.dist),y1:ylo,x2:xMid,y2:ylo,stroke:'#ffcf66','stroke-width':1,'stroke-dasharray':'3,3'});
     add('line',{x1:xMid,y1:yhi,x2:xMid,y2:ylo,stroke:'#ffb020','stroke-width':2.5});
     add('text',{x:xMid+7,y:(yhi+ylo)/2+4,fill:'#ffb020','font-weight':'bold','font-size':'14'},'崖高 '+Math.abs(a.elev-b.elev).toFixed(1)+'m');
+    // 30度基準線（崖下端＝低い方の点から上方へ）
+    const lo=a.elev<=b.elev?a:b, hiP=a.elev<=b.elev?b:a;
+    const tanA=Math.tan(rad(parseFloat(document.getElementById('pAng').value)||30));
+    const zEnd=lo.elev+tanA*Math.abs(hiP.dist-lo.dist);
+    add('line',{x1:SCAL.X(lo.dist),y1:SCAL.Y(lo.elev),x2:SCAL.X(hiP.dist),y2:SCAL.Y(zEnd),stroke:'#ffffff','stroke-width':1.5,'stroke-dasharray':'6,4'});
+    add('text',{x:SCAL.X((lo.dist+hiP.dist)/2)+4,y:SCAL.Y((lo.elev+zEnd)/2)-4,fill:'#ffffff','font-size':'11','font-weight':'bold'},'30°基準線');
   }
 }
 
 function updateReadout(){
   const el=document.getElementById('secReadout');
-  if(picks.length===0){el.innerHTML='グラフ上で崖の上端・下端の2点をクリックすると、崖高と地図への反映（2H直線）を表示します。';return;}
+  if(picks.length===0){el.innerHTML=(SAMPLES.length>2?'30度超・2m超のがけを自動抽出できませんでした。グラフをクリックで手動指定できます。':'「断面図を作成」で崖下端・上端・Hを自動判定します。');return;}
   if(picks.length===1){const a=picks[0];el.innerHTML=`1点目 標高 ${a.elev.toFixed(1)}m（距離 ${a.dist.toFixed(1)}m）／ もう1点クリックしてください`;return;}
   const c=getCliff();
   const dx=Math.abs(picks[0].dist-picks[1].dist);
   const ang=dx>0?deg(Math.atan2(c.H,dx)):90;
-  el.innerHTML=`<span class="pa">崖上端</span> ${c.top.elev.toFixed(1)}m ／ <span class="pb">崖下端</span> ${c.bottom.elev.toFixed(1)}m ／ 崖高 <span class="delta">${c.H.toFixed(1)} m</span> ／ 勾配 ${ang.toFixed(1)}° → 地図に崖位置と2H直線を反映（「確定」で重ねられます）`;
+  const modeTxt = cliffMode==='auto' ? '自動判定' : '手動補正';
+  el.innerHTML=`[${modeTxt}] <span class="pa">崖上端</span> ${c.top.elev.toFixed(1)}m ／ <span class="pb">崖下端</span> ${c.bottom.elev.toFixed(1)}m ／ 崖高 <span class="delta">${c.H.toFixed(1)} m</span> ／ 勾配 ${ang.toFixed(1)}° → 白破線=30°基準線。地図に2H影響ラインを反映（「確定」で重ねられます）`;
 }
 
 function clearPick(){picks=[];drawPicks();updateReadout();drawCliff();recompute();}
@@ -669,6 +797,7 @@ document.getElementById('chart').addEventListener('click',ev=>{
   SAMPLES.forEach(p=>{const dd=Math.abs(p.dist-d);if(dd<md){md=dd;near=p;}});
   if(picks.length>=2) picks=[];
   picks.push({dist:near.dist,elev:near.elev,lat:near.lat,lon:near.lon});
+  cliffMode='manual';
   drawPicks(); updateReadout(); drawCliff(); recompute();
 });
 
