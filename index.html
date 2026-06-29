@@ -166,7 +166,7 @@
         <div class="stat"><div class="k">建築不可ライン 2H = 倍率×H</div><div class="v" id="r2H">–</div></div>
       </div>
       <div id="verdict" class="verdict warn">測線を配置 → 「断面図を作成」 → 断面図で崖の上端・下端をクリックしてください。</div>
-      <div class="note"><b>崖高の起点：</b>がけ条例では崖の高さ H は<b>崖下端を起点</b>に測り、建築制限は<b>崖下端から崖と反対側へ水平距離 2H（＝高さの2倍）</b>。地図の<b>赤い直線</b>がその「ここまで建てられない」目安です（円ではありません）。実際に敷地のどこまで掛かるかは、断面線を何本か引いて確定線を重ねて判断します。</div>
+      <div class="note"><b>崖高の起点：</b>がけ条例では崖の高さ H は<b>崖下端を起点</b>に測り、建築制限は<b>崖下端からの水平距離 2H（＝高さの2倍）以内</b>。上側の敷地では崖下端から<b>崖上方向</b>へ水平 2H。地図の<b>赤い直線</b>がその「ここまで建てられない」目安です（円ではありません）。実際に敷地のどこまで掛かるかは、断面線を何本か引いて確定線を重ねて判断します。</div>
     </div>
 
     <div class="card">
@@ -378,7 +378,7 @@ function drawCliff(){
   makeDot(cliffLayer,[c.bottom.lat,c.bottom.lon],'#3fa7ff',false);
   makeLabel(cliffLayer,L.latLng(c.top.lat,c.top.lon),`崖上端 ${c.top.elev.toFixed(1)}m`,'#ffb020',true);
   makeLabel(cliffLayer,L.latLng(c.bottom.lat,c.bottom.lon),`崖下端 ${c.bottom.elev.toFixed(1)}m`,'#3fa7ff',true);
-  const brng=bearingRad(c.top,c.bottom);                 // 上端→下端＝崖から離れる向き
+  const brng=bearingRad(c.bottom,c.top);                 // 崖下端→崖上方向（崖下端からの水平距離2Hを測る向き）
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round'}).addTo(cliffLayer);
   makeLabel(cliffLayer,L.latLng(endP.lat,endP.lon),`⛔ ここまで建築不可（目安） 2H=${twoH.toFixed(1)}m`,'#ff3b6b',true,'#fff');
@@ -392,7 +392,7 @@ function confirmCliff(){
   const mul=parseFloat(document.getElementById('pMul').value)||2;
   const twoH=mul*c.H;
   const idx=confirmedCliffs.length+1;
-  const brng=bearingRad(c.top,c.bottom);
+  const brng=bearingRad(c.bottom,c.top);   // 崖下端→崖上方向へ2H
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.top.lat,c.top.lon],[c.bottom.lat,c.bottom.lon]],{color:'#ffb020',weight:3,opacity:.85}).addTo(confirmedLayer);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round',opacity:.95}).addTo(confirmedLayer);
@@ -455,7 +455,7 @@ function buildSummary(){
 `断面${i+1}:
   崖上端 lat:${x.top.lat.toFixed(7)} lon:${x.top.lon.toFixed(7)} 標高:${f(x.top.elev)}m
   崖下端 lat:${x.bottom.lat.toFixed(7)} lon:${x.bottom.lon.toFixed(7)} 標高:${f(x.bottom.elev)}m
-  崖高H:${f(x.H)}m / 平均勾配:${f(ang)}° / 建築不可ライン2H:${f(x.twoH)}m（崖下端から崖と反対側へ）`);
+  崖高H:${f(x.H)}m / 平均勾配:${f(ang)}° / 建築不可ライン2H:${f(x.twoH)}m（崖下端から崖上方向へ水平）`);
     });
     body=lines.join('\n');
   }
@@ -467,7 +467,8 @@ function buildSummary(){
 ${body}
 
 ※ 崖の高さ H は崖下端を起点に測り、がけ条例の建築制限は
-   崖下端から崖と反対側へ水平距離 2H（＝高さの2倍）の直線で示す。
+   崖下端からの水平距離 2H（＝高さの2倍）以内。上側の敷地では
+   崖下端から崖上方向へ水平 2H の直線で示す。
 ※ 敷地のどこまで掛かるかは、断面線を複数引いた直線の集合で判断する。
 ※ 標高は国土地理院 標高APIの点の値、距離は地図上の概算。
 ※ 正式判断には現地測量・断面図・擁壁の安全確認・建物配置図が必要。
