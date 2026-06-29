@@ -252,7 +252,7 @@ const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
 
-map.on('click', e => setPoint(mode, e.latlng.lat, e.latlng.lng, true));
+map.on('click', e => { if(siteAdjustMode) return; setPoint(mode, e.latlng.lat, e.latlng.lng, true); });
 
 /* ====== モードボタン ====== */
 const modesEl = document.getElementById('modes');
@@ -445,10 +445,28 @@ function buildSite(){
 function redrawSitePolygon(){
   siteLayer.clearLayers();
   siteLatLngs=buildSite();
-  L.polygon(siteLatLngs.map(p=>[p.lat,p.lon]),{color:COL.site,weight:2,fillColor:COL.site,fillOpacity:siteAdjustMode?.28:.18}).addTo(siteLayer)
-    .bindTooltip(`敷地（区画図トレース）約${polygonArea(siteLatLngs).toFixed(0)}㎡`,{sticky:true});
+  const poly=L.polygon(siteLatLngs.map(p=>[p.lat,p.lon]),{color:COL.site,weight:2,fillColor:COL.site,fillOpacity:siteAdjustMode?.30:.18,interactive:siteAdjustMode}).addTo(siteLayer);
+  poly.bindTooltip(`敷地（区画図トレース）約${polygonArea(siteLatLngs).toFixed(0)}㎡`+(siteAdjustMode?'／ドラッグで移動':''),{sticky:true});
+  if(siteAdjustMode) poly.on('mousedown', startSiteDrag);
   updateSiteReadout();
 }
+/* 緑のポリゴン本体をつかんで移動 */
+let _siteDrag=null;
+function startSiteDrag(e){
+  if(!siteAdjustMode) return;
+  _siteDrag={prev:e.latlng};
+  map.dragging.disable();
+  L.DomEvent.stopPropagation(e);
+  if(e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+}
+map.on('mousemove', e=>{
+  if(!_siteDrag) return;
+  siteAdj.lat += e.latlng.lat - _siteDrag.prev.lat;
+  siteAdj.lon += e.latlng.lng - _siteDrag.prev.lng;
+  _siteDrag.prev = e.latlng;
+  redrawSitePolygon(); redrawSiteHandles();
+});
+map.on('mouseup', ()=>{ if(_siteDrag){ _siteDrag=null; map.dragging.enable(); saveSiteAdj(); } });
 function redrawSiteHandles(){
   siteHandleLayer.clearLayers();
   if(!siteAdjustMode) return;
