@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>崖の高さ概算ツール｜がけ条例 一次スクリーニング</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root{
+    --bg:#0f1720; --panel:#16212e; --panel2:#1d2b3a; --line:#2c3e50;
+    --txt:#e6edf3; --muted:#9fb0c0; --accent:#3fa7ff; --ok:#37c871;
+    --warn:#ffb020; --danger:#ff5d5d; --chip:#243446;
+    --top:#ffb020; --bot:#3fa7ff; --zone:#ff3b6b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:"Segoe UI",system-ui,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;background:var(--bg);color:var(--txt)}
+  header{padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .sub{font-size:12px;color:var(--muted)}
+  .layout{display:flex;height:calc(100% - 47px);min-height:0}
+  .mapcol{flex:1;min-width:0;display:flex;flex-direction:column}
+  #map{flex:1;min-height:200px;background:#1a2530}
+  .side{width:440px;max-width:46vw;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:14px}
+  @media(max-width:820px){
+    .layout{flex-direction:column;height:auto}
+    #map{height:46vh}
+    .side{width:100%;max-width:none;border-left:none;border-top:1px solid var(--line)}
+  }
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .card h2{font-size:13px;margin:0 0 10px;color:var(--accent);letter-spacing:.02em}
+  .modes{display:flex;gap:6px;flex-wrap:wrap}
+  .mode{flex:1;min-width:120px;cursor:pointer;border:1px solid var(--line);background:var(--chip);color:var(--txt);
+    padding:8px 6px;border-radius:8px;font-size:12px;text-align:center;transition:.15s}
+  .mode .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .mode.active{outline:2px solid var(--accent);background:#22344a}
+  .hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+  .note{font-size:11px;color:#cfe0ef;background:rgba(63,167,255,.08);border:1px solid var(--line);border-radius:7px;padding:7px 9px;line-height:1.5;margin-top:8px}
+  .note b{color:var(--warn)}
+  .pt{display:grid;grid-template-columns:96px 1fr;gap:6px 8px;align-items:center;margin-bottom:8px;font-size:12px}
+  .pt .lbl{color:var(--muted);display:flex;align-items:center;gap:6px}
+  .pt input{width:100%;background:#0e1722;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px 7px;font-size:12px}
+  .pt .row3{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .ptactions{grid-column:1 / -1;display:flex;gap:6px;margin-top:2px}
+  button{cursor:pointer;border:1px solid var(--line);background:var(--chip);color:var(--txt);border-radius:7px;padding:7px 10px;font-size:12px;transition:.15s}
+  button:hover{background:#2a3d52}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:600}
+  button.small{padding:4px 8px;font-size:11px}
+  .gmaps{display:flex;gap:6px}
+  .gmaps input{flex:1;background:#0e1722;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:7px;font-size:12px}
+  .results .big{display:flex;align-items:baseline;gap:8px;margin:2px 0 10px}
+  .results .big .v{font-size:34px;font-weight:700;line-height:1}
+  .results .big .u{font-size:14px;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:#0e1722;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .stat .k{font-size:11px;color:var(--muted)}
+  .stat .v{font-size:18px;font-weight:600}
+  .verdict{margin-top:10px;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.55;border:1px solid}
+  .verdict.ok{background:rgba(55,200,113,.1);border-color:var(--ok)}
+  .verdict.warn{background:rgba(255,176,32,.1);border-color:var(--warn)}
+  .verdict.danger{background:rgba(255,93,93,.12);border-color:var(--danger)}
+  .verdict b{font-size:14px}
+  .params{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px}
+  .params label{display:flex;flex-direction:column;gap:3px;color:var(--muted)}
+  .params input{background:#0e1722;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px;font-size:12px}
+  textarea{width:100%;height:170px;background:#0e1722;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px;font-size:11.5px;font-family:ui-monospace,Consolas,monospace;line-height:1.5;resize:vertical}
+  .foot{font-size:11px;color:var(--muted);line-height:1.6}
+  .src{font-size:10.5px;color:var(--muted)}
+  .leaflet-popup-content{font-size:12px}
+  a{color:var(--accent)}
+  .badge{font-size:10px;padding:1px 6px;border-radius:10px;background:var(--chip);color:var(--muted);margin-left:6px}
+  /* 断面図パネル */
+  .section{height:310px;background:var(--panel);border-top:2px solid var(--accent);display:flex;flex-direction:column;padding:8px 10px 6px}
+  .section.hidden{display:none}
+  .sec-head{display:flex;align-items:center;gap:10px;font-size:12px;flex-wrap:wrap}
+  .sec-head b{font-size:13px;color:var(--accent)}
+  .sec-head .muted{color:var(--muted)}
+  .sec-readout{font-size:13px;margin:5px 0 2px;min-height:20px}
+  .sec-readout .delta{font-size:20px;font-weight:700;color:var(--warn);margin:0 4px}
+  .sec-readout .pa{color:var(--top);font-weight:700}
+  .sec-readout .pb{color:var(--bot);font-weight:700}
+  #chart{flex:1;width:100%;min-height:0;user-select:none;cursor:crosshair}
+  #chart text{fill:var(--muted);font-size:11px}
+  @media(max-width:820px){.section{height:290px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>崖の高さ概算ツール</h1>
+  <span class="sub">国土地理院 標高API・地理院タイル利用｜がけ条例の一次スクリーニング用</span>
+</header>
+
+<div class="layout">
+  <div class="mapcol">
+    <div id="map"></div>
+    <div id="section" class="section hidden">
+      <div class="sec-head">
+        <b>断面図</b><span class="muted">測線：始点(上側) → 終点(下側)</span>
+        <span id="secProg" class="muted"></span>
+        <span class="muted">｜ グラフ上で<b>崖の上端</b>と<b>崖の下端</b>をクリック</span>
+        <button class="small" onclick="clearPick()">選択クリア</button>
+        <button class="small" onclick="document.getElementById('section').classList.add('hidden')">閉じる</button>
+      </div>
+      <div class="sec-readout" id="secReadout">グラフ上で崖の上端・下端の2点をクリックすると、崖高・地図への反映・2H範囲を表示します。</div>
+      <svg id="chart" viewBox="0 0 1000 310"></svg>
+    </div>
+  </div>
+  <div class="side">
+
+    <div class="card">
+      <h2>1. 測線の点を地図でクリック配置</h2>
+      <div class="modes" id="modes"></div>
+      <div class="hint">「始点(上側)」を崖の上の少し奥、「終点(下側)」を崖下の少し先に置き、崖をまたぐ線を引きます。<br>
+        正確な崖上端・崖下端は次の断面図上で指定するので、ここは大まかでOK。ドラッグで微調整可。<br>
+        背景は右下のレイヤーで <b>陰影起伏図</b>・<b>色別標高図</b> に切替えると崖が見やすいです。</div>
+    </div>
+
+    <div class="card">
+      <h2>2. 各点の座標・標高</h2>
+      <div id="points"></div>
+      <div style="margin-top:6px">
+        <div class="hint" style="margin:0 0 5px">Googleマップの共有URLを貼って「読込」→ 選択中の点に設定</div>
+        <div class="gmaps">
+          <input id="gmapsUrl" placeholder="https://maps.app.goo.gl/... または ...@35.09,138.95...">
+          <button class="small" onclick="loadFromGmaps()">読込</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3. 断面図を作成（測線を50cm刻みで取得）</h2>
+      <div class="params" style="grid-template-columns:1fr 1fr">
+        <label>サンプル間隔(m)<input id="pStep" type="number" step="0.1" min="0.1" value="0.5"></label>
+        <label>　<button class="primary" style="width:100%" onclick="generateSection()">断面図を作成</button></label>
+      </div>
+      <div class="hint">測線上を指定間隔でサンプリングし標高を取得→折れ線で描きます。標高は概ね1mメッシュなので0.5m刻みでも実質1m解像度の階段状。点数が多いと取得に時間がかかります（60mで約120点）。</div>
+    </div>
+
+    <div class="card">
+      <h2>4. 判定パラメータ <span class="badge">既定=静岡県の目安</span></h2>
+      <div class="params">
+        <label>がけ高さ閾値(m)<input id="pH" type="number" step="0.1" value="2"></label>
+        <label>がけ勾配閾値(°)<input id="pAng" type="number" step="1" value="30"></label>
+        <label>離隔倍率(×H)<input id="pMul" type="number" step="0.5" value="2"></label>
+      </div>
+      <div class="hint">正確な基準は自治体・条例で異なります（沼津＝静岡県建築基準条例）。最終判断は必ず行政・建築士へ。</div>
+    </div>
+
+    <div class="card results">
+      <h2>5. 概算結果（断面図で指定した崖上端・崖下端に基づく）</h2>
+      <div class="big">
+        <span class="k" style="color:var(--muted);font-size:12px">崖高 H</span>
+        <span class="v" id="rH">–</span><span class="u">m</span>
+      </div>
+      <div class="grid2">
+        <div class="stat"><div class="k">崖上端 / 崖下端 標高</div><div class="v" id="rEdges">–</div></div>
+        <div class="stat"><div class="k">平均勾配（上端〜下端）</div><div class="v" id="rAng">–</div></div>
+        <div class="stat"><div class="k">対象範囲 2H = 倍率×H</div><div class="v" id="r2H">–</div></div>
+        <div class="stat"><div class="k">建物予定→崖下端 水平距離</div><div class="v" id="rBld">–</div></div>
+      </div>
+      <div id="verdict" class="verdict warn">断面図で崖上端・崖下端の2点を指定してください。</div>
+      <div class="note"><b>崖高の起点について：</b>がけ条例では崖の高さ H は<b>崖下端を起点</b>に測り、建築制限の範囲は<b>崖下端から水平距離 2H（＝高さの2倍）</b>です。地図の赤い円・赤線がその目安範囲です。</div>
+    </div>
+
+    <div class="card">
+      <h2>6. 成果物テキスト（コピペ用）</h2>
+      <textarea id="summary" readonly></textarea>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="primary small" onclick="copySummary()">クリップボードにコピー</button>
+        <button class="small" onclick="resetAll()">全リセット</button>
+      </div>
+    </div>
+
+    <div class="foot">
+      <b>免責：</b>本ツールの値はAPIの「点の標高」と地図上の概算距離による<b>一次スクリーニング</b>です。
+      がけ条例の正式判断には、崖上端・崖下端の現地測量、断面図、2Hライン、擁壁の安全確認、建物予定位置の配置図が必要です。<br>
+      <span class="src">出典：標高—国土地理院 標高API / 地図—地理院タイル（測量法に基づく国土地理院長承認下で利用）</span>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+/* ====== 測線の点 ====== */
+const POINTS = {
+  top:   {name:"測線 始点(上側)", color:"#ffd27f", lat:35.0931148, lon:138.9555981, elev:null, marker:null},
+  bottom:{name:"測線 終点(下側)", color:"#8fd0ff", lat:35.0935590, lon:138.9552146, elev:null, marker:null},
+  bld:   {name:"建物予定位置",    color:"#37c871", lat:35.0931148, lon:138.9555981, elev:null, marker:null},
+};
+let mode = "top";
+
+/* ====== 地図 ====== */
+const map = L.map('map').setView([35.0933, 138.9554], 18);
+const std   = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:18,attribution:"地理院タイル"});
+const photo = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',{maxZoom:18,attribution:"地理院タイル"});
+const hill  = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',{maxZoom:16,opacity:.8,attribution:"地理院タイル"});
+const relief= L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png',{maxZoom:15,opacity:.7,attribution:"地理院タイル"});
+std.addTo(map);
+L.control.layers(
+  {"標準地図":std,"航空写真":photo},
+  {"陰影起伏図（重ね）":hill,"色別標高図（重ね）":relief},
+  {collapsed:false}
+).addTo(map);
+
+map.on('click', e => setPoint(mode, e.latlng.lat, e.latlng.lng, true));
+
+/* ====== モードボタン ====== */
+const modesEl = document.getElementById('modes');
+Object.entries(POINTS).forEach(([k,p])=>{
+  const b=document.createElement('div');
+  b.className='mode'+(k===mode?' active':'');
+  b.dataset.k=k;
+  b.innerHTML=`<span class="dot" style="background:${p.color}"></span>${p.name}`;
+  b.onclick=()=>{mode=k;[...modesEl.children].forEach(c=>c.classList.toggle('active',c.dataset.k===k));};
+  modesEl.appendChild(b);
+});
+
+/* ====== 各点の入力UI ====== */
+const pointsEl=document.getElementById('points');
+Object.entries(POINTS).forEach(([k,p])=>{
+  const div=document.createElement('div');
+  div.className='pt';
+  div.innerHTML=`
+    <div class="lbl"><span class="dot" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${p.color}"></span>${p.name}</div>
+    <div class="row3">
+      <input id="${k}_lat" placeholder="緯度" value="${p.lat}">
+      <input id="${k}_lon" placeholder="経度" value="${p.lon}">
+    </div>
+    <div class="lbl">標高(m)</div>
+    <input id="${k}_elev" placeholder="未取得" value="">
+    <div class="ptactions">
+      <button class="small" onclick="applyManual('${k}')">座標反映</button>
+      <button class="small primary" onclick="fetchElev('${k}')">標高取得</button>
+      <a class="small" href="#" id="${k}_api" target="_blank" style="display:inline-block;padding:4px 8px;border:1px solid var(--line);border-radius:7px;text-decoration:none">APIを開く</a>
+    </div>`;
+  pointsEl.appendChild(div);
+});
+
+/* ====== 共通 ====== */
+const rad=x=>x*Math.PI/180, deg=x=>x*180/Math.PI;
+function apiUrl(lat,lon){return `https://cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php?lon=${lon}&lat=${lat}&outtype=JSON`;}
+function haversine(a,b){
+  const R=6371000;
+  const dLat=rad(b.lat-a.lat),dLon=rad(b.lon-a.lon);
+  const s=Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function bearingRad(a,b){
+  const f1=rad(a.lat),f2=rad(b.lat),dl=rad(b.lon-a.lon);
+  const y=Math.sin(dl)*Math.cos(f2);
+  const x=Math.cos(f1)*Math.sin(f2)-Math.sin(f1)*Math.cos(f2)*Math.cos(dl);
+  return Math.atan2(y,x);
+}
+function destination(a,brng,dist){
+  const R=6371000,d=dist/R,f1=rad(a.lat),l1=rad(a.lon);
+  const f2=Math.asin(Math.sin(f1)*Math.cos(d)+Math.cos(f1)*Math.sin(d)*Math.cos(brng));
+  const l2=l1+Math.atan2(Math.sin(brng)*Math.sin(d)*Math.cos(f1),Math.cos(d)-Math.sin(f1)*Math.sin(f2));
+  return {lat:deg(f2),lon:deg(l2)};
+}
+
+function setPoint(k,lat,lon,doFetch){
+  const p=POINTS[k];
+  p.lat=+(+lat).toFixed(7); p.lon=+(+lon).toFixed(7);
+  document.getElementById(k+'_lat').value=p.lat;
+  document.getElementById(k+'_lon').value=p.lon;
+  document.getElementById(k+'_api').href=apiUrl(p.lat,p.lon);
+  drawMarker(k);
+  if(doFetch) fetchElev(k);
+  recompute();
+}
+
+function drawMarker(k){
+  const p=POINTS[k];
+  const html=`<div style="width:16px;height:16px;border-radius:50%;background:${p.color};border:2px solid #fff;box-shadow:0 0 4px #000"></div>`;
+  const icon=L.divIcon({html,className:'',iconSize:[16,16],iconAnchor:[8,8]});
+  if(!p.marker){
+    p.marker=L.marker([p.lat,p.lon],{icon,draggable:true}).addTo(map);
+    p.marker.on('dragend',ev=>{const ll=ev.target.getLatLng();setPoint(k,ll.lat,ll.lng,true);});
+  }else p.marker.setLatLng([p.lat,p.lon]);
+  p.marker.bindTooltip(p.name+(p.elev!=null?` ${p.elev}m`:''),{permanent:true,direction:'top',offset:[0,-8]});
+}
+
+function applyManual(k){
+  const lat=parseFloat(document.getElementById(k+'_lat').value);
+  const lon=parseFloat(document.getElementById(k+'_lon').value);
+  if(isNaN(lat)||isNaN(lon)){alert('緯度・経度を数値で入力してください');return;}
+  setPoint(k,lat,lon,true); map.panTo([lat,lon]);
+}
+
+const elevCache=new Map();
+async function fetchOne(lat,lon){
+  const key=(+lat).toFixed(6)+','+(+lon).toFixed(6);
+  if(elevCache.has(key)) return elevCache.get(key);
+  try{
+    const r=await fetch(apiUrl(lat,lon));
+    const j=await r.json();
+    const v=(j.elevation==null||j.elevation==='-----')?null:+j.elevation;
+    elevCache.set(key,v); return v;
+  }catch(e){return null;}
+}
+
+async function fetchElev(k){
+  const p=POINTS[k];
+  const el=document.getElementById(k+'_elev');
+  el.value='取得中...';
+  const v=await fetchOne(p.lat,p.lon);
+  if(v==null){el.value='';p.elev=null;alert('自動取得に失敗しました。「APIを開く」で開いた値を標高欄に手入力してください。');}
+  else{p.elev=v;el.value=v;}
+  drawMarker(k); recompute();
+}
+
+/* 標高欄の手動編集を反映 */
+document.addEventListener('input',e=>{
+  for(const k of Object.keys(POINTS)){
+    if(e.target.id===k+'_elev'){
+      const v=parseFloat(e.target.value);
+      POINTS[k].elev=isNaN(v)?null:v;
+      drawMarker(k); recompute();
+    }
+  }
+});
+
+function loadFromGmaps(){
+  const u=document.getElementById('gmapsUrl').value.trim();
+  if(!u) return;
+  let m=u.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+      || u.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
+      || u.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/)
+      || u.match(/(-?\d{1,3}\.\d{4,}),\s*(-?\d{1,3}\.\d{4,})/);
+  if(!m){alert('URLから座標を読めませんでした。\n短縮URL(maps.app.goo.gl)は一度ブラウザで開いて展開後のURL、または「緯度, 経度」を貼ってください。');return;}
+  setPoint(mode,parseFloat(m[1]),parseFloat(m[2]),true);
+  map.panTo([parseFloat(m[1]),parseFloat(m[2])]);
+}
+
+/* ====== 測線 & 崖の地図描画 ====== */
+let pathLine=null, cliffLayer=null;
+function updateLine(){
+  const ll=[[POINTS.top.lat,POINTS.top.lon],[POINTS.bottom.lat,POINTS.bottom.lon]];
+  if(!pathLine) pathLine=L.polyline(ll,{color:'#9fb0c0',weight:2,dashArray:'6,5',opacity:.9}).addTo(map);
+  else pathLine.setLatLngs(ll);
+}
+
+/* 断面で指定した2点から崖の上端/下端を決める（標高の高い方=上端） */
+function getCliff(){
+  if(picks.length<2) return null;
+  const [a,b]=picks;
+  const top    = a.elev>=b.elev?a:b;
+  const bottom = a.elev>=b.elev?b:a;
+  return {top,bottom,H:top.elev-bottom.elev};
+}
+
+function drawCliffOnMap(){
+  if(cliffLayer){map.removeLayer(cliffLayer);cliffLayer=null;}
+  const c=getCliff(); if(!c) return;
+  const mul=parseFloat(document.getElementById('pMul').value)||2;
+  const twoH=mul*c.H;
+  const g=L.layerGroup().addTo(map); cliffLayer=g;
+
+  const edge=(p,txt,color)=>{
+    const html=`<div style="display:flex;align-items:center;gap:4px;transform:translate(-8px,-8px)">
+      <div style="width:15px;height:15px;background:${color};border:2px solid #fff;border-radius:3px;box-shadow:0 0 3px #000"></div>
+      <span style="background:${color};color:#04121f;font:700 11px sans-serif;padding:1px 6px;border-radius:8px;white-space:nowrap;box-shadow:0 0 3px rgba(0,0,0,.5)">${txt}</span></div>`;
+    L.marker([p.lat,p.lon],{icon:L.divIcon({html,className:'',iconSize:[0,0]}),zIndexOffset:1000}).addTo(g);
+  };
+  edge(c.top,   `崖上端 ${c.top.elev.toFixed(1)}m`, '#ffb020');
+  edge(c.bottom,`崖下端 ${c.bottom.elev.toFixed(1)}m`,'#3fa7ff');
+
+  // 崖上端→崖下端（崖そのもの）
+  L.polyline([[c.top.lat,c.top.lon],[c.bottom.lat,c.bottom.lon]],{color:'#ffb020',weight:3}).addTo(g);
+
+  // がけ条例 対象範囲：崖下端から半径2H
+  L.circle([c.bottom.lat,c.bottom.lon],{radius:twoH,color:'#ff3b6b',weight:1.5,fillColor:'#ff3b6b',fillOpacity:.12})
+    .addTo(g).bindTooltip(`がけ条例 対象範囲（崖下端から 2H=${twoH.toFixed(1)}m）`,{sticky:true});
+
+  // 崖下端から崖と反対方向へ 2H の直線（建築制限の目安ライン）
+  const brng=bearingRad(c.top,c.bottom);            // 上端→下端の向き＝崖から離れる向き
+  const endP=destination(c.bottom,brng,twoH);
+  L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:3,dashArray:'2,6'}).addTo(g);
+  const endHtml=`<div style="transform:translate(-50%,-50%);background:#ff3b6b;color:#fff;font:700 10px sans-serif;padding:2px 7px;border-radius:9px;white-space:nowrap;box-shadow:0 0 4px #000">⛔ ここまで建築制限の目安（2H=${twoH.toFixed(1)}m）</div>`;
+  L.marker([endP.lat,endP.lon],{icon:L.divIcon({html:endHtml,className:'',iconSize:[0,0]}),zIndexOffset:1000}).addTo(g);
+}
+
+/* ====== 結果・判定 ====== */
+function recompute(){
+  updateLine();
+  drawCliffOnMap();
+  updateResults();
+  buildSummary();
+}
+
+function updateResults(){
+  const c=getCliff();
+  const bd=POINTS.bld;
+  const thH=parseFloat(document.getElementById('pH').value)||0;
+  const thA=parseFloat(document.getElementById('pAng').value)||0;
+  const mul=parseFloat(document.getElementById('pMul').value)||0;
+  const set=(id,v)=>document.getElementById(id).textContent=v;
+  const vEl=document.getElementById('verdict');
+
+  if(!c){
+    ['rH','rEdges','rAng','r2H','rBld'].forEach(id=>set(id,'–'));
+    vEl.className='verdict warn';
+    vEl.innerHTML='測線を配置 → 「断面図を作成」 → 断面図で<b>崖の上端・下端</b>をクリックすると判定が出ます。';
+    return;
+  }
+  const H=c.H, dx=Math.abs(c.top.dist-c.bottom.dist);
+  const ang=dx>0?deg(Math.atan2(H,dx)):90;
+  const twoH=mul*H;
+  const bldDist=haversine(bd,c.bottom);
+  set('rH',H.toFixed(1));
+  set('rEdges',`${c.top.elev.toFixed(1)} / ${c.bottom.elev.toFixed(1)} m`);
+  set('rAng',ang.toFixed(1)+' °');
+  set('r2H',twoH.toFixed(1)+' m');
+  set('rBld',bldDist.toFixed(1)+' m');
+
+  const isCliff = H>thH && ang>thA;
+  if(!isCliff){
+    vEl.className='verdict ok';
+    vEl.innerHTML=`<b>がけ条例の「がけ」に該当しない可能性</b><br>崖高 ${H.toFixed(1)}m（閾値${thH}m）・勾配 ${ang.toFixed(1)}°（閾値${thA}°）。現地で要確認。`;
+  }else{
+    const inside = bldDist<twoH;
+    if(inside){
+      vEl.className='verdict danger';
+      vEl.innerHTML=`<b>⚠ がけ＋対象範囲内の可能性</b><br>崖高 ${H.toFixed(1)}m・勾配 ${ang.toFixed(1)}° → がけに該当。<br>崖下端から必要 ${twoH.toFixed(1)}m に対し 建物予定→崖下端 ${bldDist.toFixed(1)}m。<br><b>2H範囲内</b>＝原則、安全な擁壁か基礎の特別な配慮が必要。建築士・行政へ要相談。`;
+    }else{
+      vEl.className='verdict warn';
+      vEl.innerHTML=`<b>がけに該当（建物は2H範囲の外側）</b><br>崖高 ${H.toFixed(1)}m・勾配 ${ang.toFixed(1)}°。<br>崖下端から必要 ${twoH.toFixed(1)}m に対し 建物予定→崖下端 ${bldDist.toFixed(1)}m。概算では範囲外だが断面・崖下端位置の確定が必要。`;
+    }
+  }
+}
+
+function buildSummary(){
+  const c=getCliff(), bd=POINTS.bld;
+  const mul=parseFloat(document.getElementById('pMul').value)||2;
+  const f=(x,d=1)=>x==null?'未取得':(+x).toFixed(d);
+  let body;
+  if(!c){
+    body=`（断面図で崖上端・崖下端を指定すると、崖高・2H・距離が入ります）`;
+  }else{
+    const H=c.H, dx=Math.abs(c.top.dist-c.bottom.dist);
+    const ang=dx>0?deg(Math.atan2(H,dx)):90;
+    const twoH=mul*H, bldDist=haversine(bd,c.bottom);
+    body=
+`■ 崖上端  lat:${c.top.lat.toFixed(7)} lon:${c.top.lon.toFixed(7)}  標高:${f(c.top.elev)}m
+■ 崖下端  lat:${c.bottom.lat.toFixed(7)} lon:${c.bottom.lon.toFixed(7)}  標高:${f(c.bottom.elev)}m
+■ 建物予定 lat:${bd.lat} lon:${bd.lon}
+
+1. 概算崖高 H              : ${f(H)} m   （崖下端を起点に測定）
+2. 平均勾配(上端-下端)    : ${f(ang)} °
+3. がけ条例 対象範囲 2H   : ${f(twoH)} m （崖下端から水平距離・倍率${mul}）
+4. 建物予定-崖下端 距離   : ${f(bldDist)} m
+5. 判定                   : 建物は対象範囲の${bldDist<twoH?'【内側】（要対策・要相談）':'【外側】（概算）'}`;
+  }
+  document.getElementById('summary').value=
+`【地理院地図・標高APIによる一次確認】
+取得日: ${new Date().toLocaleDateString('ja-JP')}
+
+${body}
+
+※ 崖の高さ H は崖下端を起点に測り、がけ条例の建築制限は
+   崖下端から水平距離 2H（＝高さの2倍）の範囲が対象。
+※ 標高は国土地理院 標高APIの点の値、距離は地図上の概算。
+※ 正式判断には崖上端・崖下端の現地測量、断面図、擁壁の安全確認、
+   建物配置図が必要。沼津は静岡県建築基準条例の対象。
+   最終判断は行政・建築士・沼津土木事務所へ。`;
+}
+
+function copySummary(){
+  const ta=document.getElementById('summary'); ta.select();
+  navigator.clipboard.writeText(ta.value).then(()=>{
+    const btn=event.target;const o=btn.textContent;btn.textContent='コピーしました';setTimeout(()=>btn.textContent=o,1200);
+  }).catch(()=>document.execCommand('copy'));
+}
+
+function resetAll(){
+  picks=[]; SAMPLES=[];
+  if(cliffLayer){map.removeLayer(cliffLayer);cliffLayer=null;}
+  drawChart(); updateReadout(); recompute();
+}
+
+['pH','pAng','pMul'].forEach(id=>document.getElementById(id).addEventListener('input',recompute));
+
+/* ====== 断面図 ====== */
+let SAMPLES=[], picks=[], SCAL=null;
+function niceStep(x){const p=Math.pow(10,Math.floor(Math.log10(x||1)));const f=(x||1)/p;return (f<1.5?1:f<3.5?2:f<7.5?5:10)*p;}
+
+async function generateSection(){
+  const t=POINTS.top,b=POINTS.bottom;
+  const step=Math.max(0.1,parseFloat(document.getElementById('pStep').value)||0.5);
+  const total=haversine(t,b);
+  if(total<step){alert('始点と終点が近すぎます。測線の2点を配置してください。');return;}
+  const n=Math.floor(total/step);
+  if(n+1>800){alert('点数が多すぎます（約'+(n+1)+'点）。間隔を大きくしてください。');return;}
+  const pts=[];
+  for(let i=0;i<=n;i++){
+    const f=Math.min(1,(i*step)/total);
+    pts.push({dist:f*total,lat:t.lat+(b.lat-t.lat)*f,lon:t.lon+(b.lon-t.lon)*f});
+  }
+  if(pts[pts.length-1].dist<total-1e-6) pts.push({dist:total,lat:b.lat,lon:b.lon});
+
+  document.getElementById('section').classList.remove('hidden');
+  setTimeout(()=>map.invalidateSize(),60);
+  const prog=document.getElementById('secProg');
+  let done=0; const CONC=8;
+  const run=async()=>{let i;while((i=run.idx++)<pts.length){pts[i].elev=await fetchOne(pts[i].lat,pts[i].lon);done++;prog.textContent=`取得中 ${done}/${pts.length}`;}};
+  run.idx=0;
+  await Promise.all(Array.from({length:CONC},run));
+  SAMPLES=pts.filter(p=>p.elev!=null);
+  prog.textContent=`${SAMPLES.length}/${pts.length}点 取得（間隔${step}m・全長${total.toFixed(1)}m）`;
+  picks=[]; drawChart(); updateReadout(); recompute();
+}
+
+function drawChart(){
+  const svg=document.getElementById('chart');
+  while(svg.firstChild) svg.removeChild(svg.lastChild);
+  if(SAMPLES.length<2) return;
+  const rect=svg.getBoundingClientRect();
+  const W=Math.max(320,Math.round(rect.width))||1000, H=Math.max(180,Math.round(rect.height))||300;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const ml=58,mr=18,mt=14,mb=30;
+  const xs=SAMPLES.map(p=>p.dist), ys=SAMPLES.map(p=>p.elev);
+  const xmax=Math.max(...xs)||1;
+  let ymin=Math.min(...ys),ymax=Math.max(...ys);
+  const pad=Math.max(0.5,(ymax-ymin)*0.12); ymin-=pad; ymax+=pad;
+  const X=d=>ml+d/xmax*(W-ml-mr);
+  const Y=e=>H-mb-(e-ymin)/(ymax-ymin)*(H-mt-mb);
+  SCAL={W,H,ml,mr,mt,mb,xmax,X,Y};
+  const NS='http://www.w3.org/2000/svg';
+  const add=(tag,a,txt)=>{const el=document.createElementNS(NS,tag);for(const k in a)el.setAttribute(k,a[k]);if(txt!=null)el.textContent=txt;svg.appendChild(el);return el;};
+
+  for(let i=0;i<=5;i++){const e=ymin+(ymax-ymin)*i/5,y=Y(e);
+    add('line',{x1:ml,y1:y,x2:W-mr,y2:y,stroke:'#2c3e50','stroke-width':1});
+    add('text',{x:ml-6,y:y+4,'text-anchor':'end'},e.toFixed(1));}
+  const xstep=niceStep(xmax/6);
+  for(let d=0;d<=xmax+1e-6;d+=xstep){const x=X(d);
+    add('line',{x1:x,y1:mt,x2:x,y2:H-mb,stroke:'#223141','stroke-width':1});
+    add('text',{x:x,y:H-mb+16,'text-anchor':'middle'},d.toFixed(0));}
+  let dA=`M ${X(0)} ${H-mb} `; SAMPLES.forEach(p=>dA+=`L ${X(p.dist)} ${Y(p.elev)} `); dA+=`L ${X(xmax)} ${H-mb} Z`;
+  add('path',{d:dA,fill:'rgba(63,167,255,.15)'});
+  add('path',{d:'M '+SAMPLES.map(p=>`${X(p.dist)} ${Y(p.elev)}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':2});
+  add('text',{x:(ml+W-mr)/2,y:H-3,'text-anchor':'middle'},'水平距離 (m)  左=始点(上側) / 右=終点(下側)');
+  add('text',{x:13,y:H/2,'text-anchor':'middle',transform:`rotate(-90 13 ${H/2})`},'標高 (m)');
+  drawPicks();
+}
+
+function drawPicks(){
+  if(!SCAL) return;
+  const svg=document.getElementById('chart');
+  svg.querySelectorAll('.pick').forEach(e=>e.remove());
+  const NS='http://www.w3.org/2000/svg';
+  const add=(tag,a,txt)=>{const el=document.createElementNS(NS,tag);el.setAttribute('class','pick');for(const k in a)el.setAttribute(k,a[k]);if(txt!=null)el.textContent=txt;svg.appendChild(el);return el;};
+  const two=picks.length===2;
+  const hi = two?Math.max(picks[0].elev,picks[1].elev):null;
+  picks.forEach((p,i)=>{
+    const isTop = two && p.elev===hi;
+    const color = two ? (isTop?'#ffb020':'#3fa7ff') : '#e6edf3';
+    const lbl   = two ? (isTop?'崖上端':'崖下端') : (i===0?'①':'②');
+    const x=SCAL.X(p.dist),y=SCAL.Y(p.elev);
+    add('line',{x1:x,y1:SCAL.mt,x2:x,y2:SCAL.H-SCAL.mb,stroke:color,'stroke-width':1.5,'stroke-dasharray':'4,3'});
+    add('circle',{cx:x,cy:y,r:5,fill:color,stroke:'#fff','stroke-width':1.5});
+    add('text',{x:x,y:y-9,'text-anchor':'middle',fill:color,'font-weight':'bold'},`${lbl} ${p.elev.toFixed(1)}m`);
+  });
+  if(two){
+    const a=picks[0],b=picks[1];
+    const xMid=(SCAL.X(a.dist)+SCAL.X(b.dist))/2;
+    const yhi=SCAL.Y(Math.max(a.elev,b.elev)),ylo=SCAL.Y(Math.min(a.elev,b.elev));
+    add('line',{x1:SCAL.X(a.dist),y1:yhi,x2:xMid,y2:yhi,stroke:'#ffcf66','stroke-width':1,'stroke-dasharray':'3,3'});
+    add('line',{x1:SCAL.X(b.dist),y1:ylo,x2:xMid,y2:ylo,stroke:'#ffcf66','stroke-width':1,'stroke-dasharray':'3,3'});
+    add('line',{x1:xMid,y1:yhi,x2:xMid,y2:ylo,stroke:'#ffb020','stroke-width':2.5});
+    add('text',{x:xMid+7,y:(yhi+ylo)/2+4,fill:'#ffb020','font-weight':'bold','font-size':'14'},'崖高 '+Math.abs(a.elev-b.elev).toFixed(1)+'m');
+  }
+}
+
+function updateReadout(){
+  const el=document.getElementById('secReadout');
+  if(picks.length===0){el.innerHTML='グラフ上で崖の上端・下端の2点をクリックすると、崖高・地図への反映・2H範囲を表示します。';return;}
+  if(picks.length===1){const a=picks[0];el.innerHTML=`1点目 標高 ${a.elev.toFixed(1)}m（距離 ${a.dist.toFixed(1)}m）／ もう1点クリックしてください`;return;}
+  const c=getCliff();
+  const dx=Math.abs(picks[0].dist-picks[1].dist);
+  const ang=dx>0?deg(Math.atan2(c.H,dx)):90;
+  el.innerHTML=`<span class="pa">崖上端</span> ${c.top.elev.toFixed(1)}m ／ <span class="pb">崖下端</span> ${c.bottom.elev.toFixed(1)}m ／ 崖高 <span class="delta">${c.H.toFixed(1)} m</span> ／ 勾配 ${ang.toFixed(1)}° → 地図に崖位置と2H範囲を反映`;
+}
+
+function clearPick(){picks=[];drawPicks();updateReadout();recompute();}
+
+let resizeT=null;
+window.addEventListener('resize',()=>{clearTimeout(resizeT);resizeT=setTimeout(()=>{if(SAMPLES.length>1)drawChart();},150);});
+
+document.getElementById('chart').addEventListener('click',ev=>{
+  if(!SCAL||SAMPLES.length<2) return;
+  const svg=ev.currentTarget, pt=svg.createSVGPoint();
+  pt.x=ev.clientX; pt.y=ev.clientY;
+  const u=pt.matrixTransform(svg.getScreenCTM().inverse());
+  const d=(u.x-SCAL.ml)/(SCAL.W-SCAL.ml-SCAL.mr)*SCAL.xmax;
+  let near=SAMPLES[0],md=Infinity;
+  SAMPLES.forEach(p=>{const dd=Math.abs(p.dist-d);if(dd<md){md=dd;near=p;}});
+  if(picks.length>=2) picks=[];
+  picks.push({dist:near.dist,elev:near.elev,lat:near.lat,lon:near.lon});
+  drawPicks(); updateReadout(); recompute();
+});
+
+/* ====== 初期化 ====== */
+['top','bottom','bld'].forEach(k=>setPoint(k,POINTS[k].lat,POINTS[k].lon,false));
+fetchElev('top'); fetchElev('bottom');
+recompute();
+</script>
+</body>
+</html>
