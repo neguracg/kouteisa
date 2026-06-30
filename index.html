@@ -599,6 +599,36 @@ function pointInPoly(e,n,poly){ // poly: [{e,n}]
   }
   return inside;
 }
+function pointInSite(lat,lon){
+  let inside=false;
+  for(let i=0,j=siteLatLngs.length-1;i<siteLatLngs.length;j=i++){
+    const xi=siteLatLngs[i].lon,yi=siteLatLngs[i].lat,xj=siteLatLngs[j].lon,yj=siteLatLngs[j].lat;
+    if(((yi>lat)!==(yj>lat)) && (lon<(xj-xi)*(lat-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function pointInLLPoly(lat,lon,poly){ // poly:[{lat,lon}]
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].lon,yi=poly[i].lat,xj=poly[j].lon,yj=poly[j].lat;
+    if(((yi>lat)!==(yj>lat)) && (lon<(xj-xi)*(lat-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function segT(p1,p2,p3,p4){ // t along p1->p2 where it crosses p3-p4 (x=lon,y=lat)
+  const x1=p1.lon,y1=p1.lat,x2=p2.lon,y2=p2.lat,x3=p3.lon,y3=p3.lat,x4=p4.lon,y4=p4.lat;
+  const den=(x1-x2)*(y3-y4)-(y1-y2)*(x3-x4); if(Math.abs(den)<1e-12) return null;
+  const t=((x1-x3)*(y3-y4)-(y1-y3)*(x3-x4))/den, u=((x1-x3)*(y1-y2)-(y1-y3)*(x1-x2))/den;
+  return (t>=0&&t<=1&&u>=0&&u<=1)?t:null;
+}
+function clipToSite(s,e){ // 線分s->eのうち敷地内部分を返す
+  const ts=[0,1];
+  for(let i=0;i<siteLatLngs.length;i++){const t=segT(s,e,siteLatLngs[i],siteLatLngs[(i+1)%siteLatLngs.length]); if(t!=null) ts.push(t);}
+  ts.sort((a,b)=>a-b);
+  const lp=t=>({lat:s.lat+(e.lat-s.lat)*t, lon:s.lon+(e.lon-s.lon)*t});
+  for(let i=0;i<ts.length-1;i++){const tm=(ts[i]+ts[i+1])/2,mp=lp(tm); if(pointInSite(mp.lat,mp.lon)) return [lp(ts[i]),lp(ts[i+1])];}
+  return null;
+}
 let BAND_STRIPS=[];   // {samples,startLL,endLL,base,baseEN,up,twoH,reach,none}
 function showLoading(msg){const l=document.getElementById('loading');document.getElementById('loadingMsg').textContent=msg||'計算中…';l.classList.add('on');}
 function hideLoading(){document.getElementById('loading').classList.remove('on');}
@@ -657,6 +687,8 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
   const ok=BAND_STRIPS.filter(s=>!s.none);
   const el=document.getElementById('bandResult'); el.style.display='block';
   if(ok.length<2){ el.innerHTML='崖を検出できた帯が不足。敷地の配置や測線の“向き”を確認してください。'; return; }
+  // 影響帯ポリゴン（崖下端ライン→2H影響ライン）。これに対する内外で判定＝描画と一致
+  const enc=ok.map(s=>({lat:s.base.lat,lon:s.base.lon})).concat(ok.map(s=>({lat:s.reach.lat,lon:s.reach.lon})).reverse());
   const sEN=siteLatLngs.map(toEN);
   const eMin=Math.min(...sEN.map(p=>p.e)),eMax=Math.max(...sEN.map(p=>p.e));
   const nMin=Math.min(...sEN.map(p=>p.n)),nMax=Math.max(...sEN.map(p=>p.n));
@@ -664,14 +696,13 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
   for(let e=eMin;e<=eMax;e+=1) for(let n=nMin;n<=nMax;n+=1){
     if(!pointInPoly(e+0.5,n+0.5,sEN)) continue;
     total++;
-    let st=ok[0],md=Infinity; for(const s of ok){const dd=(e+0.5-s.baseEN.e)**2+(n+0.5-s.baseEN.n)**2; if(dd<md){md=dd;st=s;}}
-    const alongUp=(e+0.5-st.baseEN.e)*st.up.e+(n+0.5-st.baseEN.n)*st.up.n;
-    const free=alongUp>=st.twoH; if(free) usable++;
+    const c=toLL(e+0.5,n+0.5);
+    const infl=pointInLLPoly(c.lat,c.lon,enc);   // 影響帯の内側か
+    if(!infl) usable++;
     const sw=toLL(e,n), ne=toLL(e+1,n+1);
-    L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:free?'#19c37d':'#ff3b6b',fillOpacity:.30,interactive:false}).addTo(cellLayer);
+    L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:infl?'#ff3b6b':'#19c37d',fillOpacity:.30,interactive:false}).addTo(cellLayer);
   }
-  const encPoly=ok.map(s=>({lat:s.base.lat,lon:s.base.lon})).concat(ok.map(s=>({lat:s.reach.lat,lon:s.reach.lon})).reverse());
-  const enclosed=polygonArea(encPoly), area=polygonArea(siteLatLngs), f=x=>x.toFixed(0);
+  const enclosed=polygonArea(enc), area=polygonArea(siteLatLngs), f=x=>x.toFixed(0);
   L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
     html:`<div class="arealbl">敷地 ${f(area)}㎡<br><span class="g">使用可 ${f(usable)}㎡</span> / <span class="r">影響内 ${f(total-usable)}㎡</span></div>`})}).addTo(bandLayer);
   el.innerHTML=`<b>敷地 約${f(area)}㎡</b>（格子1m概算）<br>■ 使用可能（2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 2H影響内（要対策面積）：<b>約${f(total-usable)}㎡</b><br>■ がけ対策対象面積（2Hライン囲み）：約${f(enclosed)}㎡<br><span class="src">緑=使用可/赤=影響内。赤線=2H影響ライン。薄い灰線=各断面（クリック/←→で切替）。正式判断は実測断面図・設計者・行政協議。</span>`;
@@ -684,13 +715,15 @@ function clearBand(){
 }
 function drawBand(){
   bandLayer.clearLayers();
-  // 各断面：見える薄線＋当たり判定用の太い透明線（クリックで断面図）
+  // 各断面：敷地内に収まる部分だけ薄線＋太い透明線（クリックで断面図）
   BAND_STRIPS.forEach((st,i)=>{
-    const ll=[[st.startLL.lat,st.startLL.lon],[st.endLL.lat,st.endLL.lon]];
-    L.polyline(ll,{color:'#9fb0c0',weight:1.5,opacity:.40,interactive:false}).addTo(bandLayer);
+    const clip=clipToSite(st.startLL,st.endLL);
+    if(!clip) return;
+    const ll=[[clip[0].lat,clip[0].lon],[clip[1].lat,clip[1].lon]];
+    L.polyline(ll,{color:'#9fb0c0',weight:1.5,opacity:.45,interactive:false}).addTo(bandLayer);
     const hit=L.polyline(ll,{color:'#ffffff',weight:14,opacity:0,interactive:true}).addTo(bandLayer);
     hit.on('click',()=>showStripSection(i));
-    hit.on('mouseover',()=>hit.setStyle({opacity:.12}));
+    hit.on('mouseover',()=>hit.setStyle({opacity:.14}));
     hit.on('mouseout',()=>hit.setStyle({opacity:0}));
     hit.bindTooltip('クリックで断面図',{sticky:true});
   });
@@ -716,13 +749,19 @@ async function showStripSection(i){
   }
   if(!st.samples||st.samples.length<3) return;
   SAMPLES=st.samples; picks=[];
-  selLayer.clearLayers();
-  L.polyline([[st.startLL.lat,st.startLL.lon],[st.endLL.lat,st.endLL.lon]],{color:'#ffffff',weight:2,opacity:.9,interactive:false}).addTo(selLayer);
-  const s0=st.samples[0], s1=st.samples[st.samples.length-1];   // s0=始点(上側) s1=終点(下側)
-  addSel(s0,'断面始点',COL.start); addSel(s1,'断面終点',COL.end);
   document.getElementById('section').classList.remove('hidden');
   setTimeout(()=>map.invalidateSize(),60);
-  runAuto();
+  runAuto();   // 崖検出＋断面図（崖周辺にウィンドウ表示）
+  // 地図：選択断面のハイライト（敷地内）＋表示窓の始点/終点
+  selLayer.clearLayers();
+  const clip=clipToSite(st.startLL,st.endLL);
+  const hl=clip?[[clip[0].lat,clip[0].lon],[clip[1].lat,clip[1].lon]]:[[st.startLL.lat,st.startLL.lon],[st.endLL.lat,st.endLL.lon]];
+  L.polyline(hl,{color:'#ffffff',weight:3,opacity:.95,interactive:false}).addTo(selLayer);
+  const win=chartWindow();
+  if(win){
+    const at=d=>{let n=SAMPLES[0],md=Infinity;SAMPLES.forEach(p=>{const dd=Math.abs(p.dist-d);if(dd<md){md=dd;n=p;}});return n;};
+    addSel(at(win[0]),'断面始点',COL.start); addSel(at(win[1]),'断面終点',COL.end);
+  }else{ addSel(SAMPLES[0],'断面始点',COL.start); addSel(SAMPLES[SAMPLES.length-1],'断面終点',COL.end); }
   document.getElementById('secProg').textContent=`断面 #${i+1} ／ ${BAND_STRIPS.length}（←→キーで切替）`;
 }
 /* 共有URLで渡された2Hラインをそのまま描画（再計算しない） */
@@ -733,13 +772,17 @@ function buildSharedBand(){
   const mLat=111320,mLon=111320*Math.cos(rad(cLat));
   const toEN=p=>({e:(p.lon-cLon)*mLon,n:(p.lat-cLat)*mLat});
   const toLL=(e,n)=>({lat:cLat+n/mLat,lon:cLon+e/mLon});
+  const sEN0=siteLatLngs.map(toEN);
   BAND_STRIPS=SHARED_STRIPS.map(a=>{
     const base={lat:+a[0],lon:+a[1]}, reach={lat:+a[2],lon:+a[3]};
     const bEN=toEN(base), rEN=toEN(reach);
     let ue=rEN.e-bEN.e, un=rEN.n-bEN.n; const twoH=Math.hypot(ue,un)||1; ue/=twoH; un/=twoH;
     const up={e:ue,n:un};
-    const startLL=toLL(bEN.e+up.e*30, bEN.n+up.n*30);  // 上側(高)
-    const endLL  =toLL(bEN.e-up.e*60, bEN.n-up.n*60);  // 下側(低)
+    // 敷地の最も奥（上側）まで届く長さを確保＝断面線が敷地を横断
+    let upMax=0; for(const pe of sEN0){const d=(pe.e-bEN.e)*up.e+(pe.n-bEN.n)*up.n; if(d>upMax)upMax=d;}
+    const Lup=Math.max(40,upMax+15);
+    const startLL=toLL(bEN.e+up.e*Lup, bEN.n+up.n*Lup);  // 上側(高)
+    const endLL  =toLL(bEN.e-up.e*25,  bEN.n-up.n*25);   // 下側(低・崖下端の少し先)
     return {base,reach,baseEN:bEN,up,twoH,startLL,endLL,samples:null};
   });
   bandLayer.clearLayers(); selLayer.clearLayers();
@@ -1050,34 +1093,48 @@ function drawChart(){
   const W=Math.max(320,Math.round(rect.width))||1000, H=Math.max(180,Math.round(rect.height))||300;
   svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
   const ml=58,mr=18,mt=14,mb=30;
-  const xs=SAMPLES.map(p=>p.dist), ys=SAMPLES.map(p=>p.elev);
-  const xmax=Math.max(...xs)||1;
+  // 表示ウィンドウ：崖（下端・上端）周辺に絞る（遠い平地は描かない）
+  const dAll=SAMPLES.map(p=>p.dist); let xLo=Math.min(...dAll), xHi=Math.max(...dAll);
+  const win=chartWindow();
+  if(win){ xLo=win[0]; xHi=win[1]; }
+  const span=(xHi-xLo)||1;
+  const inWin=SAMPLES.filter(p=>p.dist>=xLo-1e-6 && p.dist<=xHi+1e-6);
+  const view=inWin.length>=2?inWin:SAMPLES;
+  const ys=view.map(p=>p.elev);
   let ymin=Math.min(...ys),ymax=Math.max(...ys);
   const pad=Math.max(0.5,(ymax-ymin)*0.12); ymin-=pad; ymax+=pad;
-  const X=d=>ml+d/xmax*(W-ml-mr);
+  const X=d=>ml+(d-xLo)/span*(W-ml-mr);
   const Y=e=>H-mb-(e-ymin)/(ymax-ymin)*(H-mt-mb);
-  SCAL={W,H,ml,mr,mt,mb,xmax,X,Y};
+  SCAL={W,H,ml,mr,mt,mb,xLo,xHi,X,Y};
   const NS='http://www.w3.org/2000/svg';
   const add=(tag,a,txt)=>{const el=document.createElementNS(NS,tag);for(const k in a)el.setAttribute(k,a[k]);if(txt!=null)el.textContent=txt;svg.appendChild(el);return el;};
   for(let i=0;i<=5;i++){const e=ymin+(ymax-ymin)*i/5,y=Y(e);
     add('line',{x1:ml,y1:y,x2:W-mr,y2:y,stroke:'#2c3e50','stroke-width':1});
     add('text',{x:ml-6,y:y+4,'text-anchor':'end'},e.toFixed(1));}
-  const xstep=niceStep(xmax/6);
-  for(let d=0;d<=xmax+1e-6;d+=xstep){const x=X(d);
+  const xstep=niceStep(span/6);
+  for(let d=Math.ceil(xLo/xstep)*xstep; d<=xHi+1e-6; d+=xstep){const x=X(d);
     add('line',{x1:x,y1:mt,x2:x,y2:H-mb,stroke:'#223141','stroke-width':1});
     add('text',{x:x,y:H-mb+16,'text-anchor':'middle'},d.toFixed(0));}
-  let dA=`M ${X(0)} ${H-mb} `; SAMPLES.forEach(p=>dA+=`L ${X(p.dist)} ${Y(p.elev)} `); dA+=`L ${X(xmax)} ${H-mb} Z`;
+  let dA=`M ${X(view[0].dist)} ${H-mb} `; view.forEach(p=>dA+=`L ${X(p.dist)} ${Y(p.elev)} `); dA+=`L ${X(view[view.length-1].dist)} ${H-mb} Z`;
   add('path',{d:dA,fill:'rgba(63,167,255,.15)'});
-  add('path',{d:'M '+SAMPLES.map(p=>`${X(p.dist)} ${Y(p.elev)}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':2});
-  add('text',{x:(ml+W-mr)/2,y:H-3,'text-anchor':'middle'},'水平距離 (m)  左=断面図始点 / 右=断面図終点');
+  add('path',{d:'M '+view.map(p=>`${X(p.dist)} ${Y(p.elev)}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':2});
+  add('text',{x:(ml+W-mr)/2,y:H-3,'text-anchor':'middle'},'水平距離 (m)  左=崖上側 / 右=崖下側');
   add('text',{x:13,y:H/2,'text-anchor':'middle',transform:`rotate(-90 13 ${H/2})`},'標高 (m)');
-  // 断面図 始点／終点（地図のアイコンと同色）
-  const s0=SAMPLES[0], s1=SAMPLES[SAMPLES.length-1];
+  // 断面図 始点／終点（表示窓の両端・地図のアイコンと同色）
+  const s0=view[0], s1=view[view.length-1];
   add('circle',{cx:X(s0.dist),cy:Y(s0.elev),r:5,fill:COL.start,stroke:'#fff','stroke-width':1.5});
   add('text',{x:X(s0.dist)+8,y:Y(s0.elev)-8,fill:COL.start,'font-weight':'bold'},'始点');
   add('circle',{cx:X(s1.dist),cy:Y(s1.elev),r:5,fill:COL.end,stroke:'#fff','stroke-width':1.5});
   add('text',{x:X(s1.dist)-8,y:Y(s1.elev)-8,'text-anchor':'end',fill:COL.end,'font-weight':'bold'},'終点');
   drawPicks();
+}
+function chartWindow(){
+  if(picks.length!==2 || SAMPLES.length<2) return null;
+  const lo=Math.min(picks[0].dist,picks[1].dist), hi=Math.max(picks[0].dist,picks[1].dist);
+  const d0=SAMPLES[0].dist, d1=SAMPLES[SAMPLES.length-1].dist;
+  const a=Math.min(d0,d1), b=Math.max(d0,d1);
+  const M=Math.max(8, (hi-lo)*0.6);   // 崖高さに応じた余白
+  return [Math.max(a, lo-M), Math.min(b, hi+M)];
 }
 
 function drawPicks(){
@@ -1140,7 +1197,7 @@ document.getElementById('chart').addEventListener('click',ev=>{
   const svg=ev.currentTarget, pt=svg.createSVGPoint();
   pt.x=ev.clientX; pt.y=ev.clientY;
   const u=pt.matrixTransform(svg.getScreenCTM().inverse());
-  const d=(u.x-SCAL.ml)/(SCAL.W-SCAL.ml-SCAL.mr)*SCAL.xmax;
+  const d=SCAL.xLo+(u.x-SCAL.ml)/(SCAL.W-SCAL.ml-SCAL.mr)*(SCAL.xHi-SCAL.xLo);
   let near=SAMPLES[0],md=Infinity;
   SAMPLES.forEach(p=>{const dd=Math.abs(p.dist-d);if(dd<md){md=dd;near=p;}});
   if(picks.length>=2) picks=[];
