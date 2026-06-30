@@ -123,9 +123,14 @@
 <body>
 <div id="mobileBlock">
   <div>
-    <div style="font-size:20px;font-weight:700;margin-bottom:12px">PCでご利用ください</div>
-    このアプリはパソコン（横長画面）専用です。<br>スマートフォンでは正しく操作できません。<br><br>
-    パソコンのブラウザで<br><b>https://neguracg.github.io/kouteisa/</b><br>を開いてください。
+    <div style="font-size:20px;font-weight:700;margin-bottom:12px">PCで開いてください</div>
+    この資料はパソコン（横長画面）専用です。<br>スマートフォンでは表示できません。<br><br>
+    <b>いま開いているこのURLを、そのままパソコンで開いてください。</b><br>
+    （届いたリンクをPCで開く／下のURLをコピーしてPCへ送る）
+    <div style="margin-top:14px;text-align:left">
+      <div id="mbUrl" style="font-size:11px;word-break:break-all;background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:8px;padding:8px;max-height:140px;overflow:auto"></div>
+      <button id="mbCopy" style="margin-top:10px;width:100%">このURLをコピー</button>
+    </div>
   </div>
 </div>
 <div id="loading"><div class="lbox"><div class="spin"></div><div id="loadingMsg">計算中…</div></div></div>
@@ -780,7 +785,7 @@ function buildSharedBand(){
     const up={e:ue,n:un};
     // 敷地の最も奥（上側）まで届く長さを確保＝断面線が敷地を横断
     let upMax=0; for(const pe of sEN0){const d=(pe.e-bEN.e)*up.e+(pe.n-bEN.n)*up.n; if(d>upMax)upMax=d;}
-    const Lup=Math.max(40,upMax+15);
+    const Lup=Math.max(40,upMax+15,twoH+12);   // 2H影響点も断面図に入るよう確保
     const startLL=toLL(bEN.e+up.e*Lup, bEN.n+up.n*Lup);  // 上側(高)
     const endLL  =toLL(bEN.e-up.e*25,  bEN.n-up.n*25);   // 下側(低・崖下端の少し先)
     return {base,reach,baseEN:bEN,up,twoH,startLL,endLL,samples:null};
@@ -1133,8 +1138,12 @@ function chartWindow(){
   const lo=Math.min(picks[0].dist,picks[1].dist), hi=Math.max(picks[0].dist,picks[1].dist);
   const d0=SAMPLES[0].dist, d1=SAMPLES[SAMPLES.length-1].dist;
   const a=Math.min(d0,d1), b=Math.max(d0,d1);
-  const M=Math.max(8, (hi-lo)*0.6);   // 崖高さに応じた余白
-  return [Math.max(a, lo-M), Math.min(b, hi+M)];
+  const mul=parseFloat(document.getElementById('pMul').value)||2;
+  const base=picks[0].elev<=picks[1].elev?picks[0]:picks[1];     // 崖下端
+  const twoH=mul*Math.abs(picks[0].elev-picks[1].elev);
+  const d2=base.dist - twoH;                                     // 2H影響点（崖上方向＝小dist側）
+  const left=Math.min(lo, d2)-6, right=hi+8;                     // 2H点まで表示窓を広げる
+  return [Math.max(a, left), Math.min(b, right)];
 }
 
 function drawPicks(){
@@ -1167,11 +1176,23 @@ function drawPicks(){
     const zEnd=lo.elev+tanA*Math.abs(hiP.dist-lo.dist);
     add('line',{x1:SCAL.X(lo.dist),y1:SCAL.Y(lo.elev),x2:SCAL.X(hiP.dist),y2:SCAL.Y(zEnd),stroke:'#ffffff','stroke-width':1.5,'stroke-dasharray':'6,4'});
     add('text',{x:SCAL.W-SCAL.mr-4,y:SCAL.H-SCAL.mb-6,'text-anchor':'end',fill:'#cfd8e3','font-size':'11'},'白破線=30°基準線');
-    // 崖高：チャート左上に大きくオレンジ太字（縁取り）で固定表示
-    const hTxt='崖高 H = '+Math.abs(a.elev-b.elev).toFixed(1)+' m';
-    const hx=SCAL.ml+10, hyT=SCAL.mt+26;
-    add('text',{x:hx,y:hyT,fill:'#0f1720','stroke':'#0f1720','stroke-width':5,'font-weight':'bold','font-size':'24'},hTxt);
-    add('text',{x:hx,y:hyT,fill:'#ffb020','font-weight':'bold','font-size':'24'},hTxt);
+    // === 2H影響ラインを断面図にも表示（崖下端から崖上方向へ水平2H）===
+    const mul=parseFloat(document.getElementById('pMul').value)||2;
+    const H=Math.abs(a.elev-b.elev), twoH=mul*H;
+    const baseP=a.elev<=b.elev?a:b;                 // 崖下端
+    const d2=baseP.dist - twoH;                     // 2H点（崖上方向＝小dist側）
+    const e2=elevAtDist(d2);
+    const xb=SCAL.X(baseP.dist), yb=SCAL.Y(baseP.elev), x2=SCAL.X(d2), y2=SCAL.Y(e2);
+    add('line',{x1:x2,y1:SCAL.mt,x2:x2,y2:SCAL.H-SCAL.mb,stroke:'#ff3b6b','stroke-width':1.5,'stroke-dasharray':'4,3'});   // 2H影響ライン位置
+    add('line',{x1:xb,y1:yb,x2:x2,y2:yb,stroke:'#ff3b6b','stroke-width':1.5,'stroke-dasharray':'5,3'});                   // 水平2Hの距離線
+    add('line',{x1:x2,y1:yb,x2:x2,y2:y2,stroke:'#ff3b6b','stroke-width':1,'stroke-dasharray':'2,2'});
+    add('circle',{cx:x2,cy:y2,r:6,fill:'#ff3b6b',stroke:'#fff','stroke-width':2});                                       // 2H到達点（赤丸）
+    // 崖高H（オレンジ）と 2H（赤）を左上に強調表示
+    const hx=SCAL.ml+10, hyT=SCAL.mt+24;
+    const lab=(y,txt,col,sz)=>{add('text',{x:hx,y,fill:'#0f1720','stroke':'#0f1720','stroke-width':5,'font-weight':'bold','font-size':sz},txt);
+                               add('text',{x:hx,y,fill:col,'font-weight':'bold','font-size':sz},txt);};
+    lab(hyT,      '崖高 H = '+H.toFixed(1)+' m', '#ffb020', '23');
+    lab(hyT+24,   '2H 影響 = '+twoH.toFixed(1)+' m（崖高×2）', '#ff5d7a', '18');
   }
 }
 
@@ -1256,6 +1277,15 @@ document.addEventListener('keydown',e=>{
   pos=Math.max(0,Math.min(okIdx.length-1, pos+(e.key==='ArrowRight'?1:-1)));
   showStripSection(okIdx[pos]); e.preventDefault();
 });
+
+/* ====== モバイル案内：実URLを表示・コピー（ハードコードしない） ====== */
+(function(){
+  const u=document.getElementById('mbUrl'); if(u) u.textContent=location.href;
+  const b=document.getElementById('mbCopy');
+  if(b) b.onclick=()=>{ navigator.clipboard.writeText(location.href)
+    .then(()=>{b.textContent='コピーしました ✓';})
+    .catch(()=>{ if(u){const r=document.createRange();r.selectNodeContents(u);const s=getSelection();s.removeAllRanges();s.addRange(r);} b.textContent='上のURLを長押しでコピー'; }); };
+})();
 
 /* ====== 初期化 ====== */
 const _shared=applyShared();
