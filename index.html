@@ -1187,12 +1187,17 @@ function drawPicks(){
     add('line',{x1:xb,y1:yb,x2:x2,y2:yb,stroke:'#ff3b6b','stroke-width':1.5,'stroke-dasharray':'5,3'});                   // 水平2Hの距離線
     add('line',{x1:x2,y1:yb,x2:x2,y2:y2,stroke:'#ff3b6b','stroke-width':1,'stroke-dasharray':'2,2'});
     add('circle',{cx:x2,cy:y2,r:6,fill:'#ff3b6b',stroke:'#fff','stroke-width':2});                                       // 2H到達点（赤丸）
-    // 崖高H（オレンジ）と 2H（赤）を左上に強調表示
-    const hx=SCAL.ml+10, hyT=SCAL.mt+24;
-    const lab=(y,txt,col,sz)=>{add('text',{x:hx,y,fill:'#0f1720','stroke':'#0f1720','stroke-width':5,'font-weight':'bold','font-size':sz},txt);
-                               add('text',{x:hx,y,fill:col,'font-weight':'bold','font-size':sz},txt);};
-    lab(hyT,      '崖高 H = '+H.toFixed(1)+' m', '#ffb020', '23');
-    lab(hyT+24,   '2H 影響 = '+twoH.toFixed(1)+' m（崖高×2）', '#ff5d7a', '18');
+    // 数値ラベルは「対応する線の真横」に同じ強調で描く（左上の凡例はやめる）
+    const lab=(x,y,txt,col,sz,anchor)=>{
+      add('text',{x,y,'text-anchor':anchor,fill:'#0f1720','stroke':'#0f1720','stroke-width':5,'stroke-linejoin':'round','font-weight':'bold','font-size':sz},txt);
+      add('text',{x,y,'text-anchor':anchor,fill:col,'font-weight':'bold','font-size':sz},txt);
+    };
+    // ① 崖高H：高さを表すオレンジ縦線（xMid, yhi〜ylo）の真横にオレンジ太字で
+    const yMidH=(yhi+ylo)/2;
+    lab(xMid+10, yMidH+8, 'H = '+H.toFixed(1)+' m', '#ffb020', '23', 'start');
+    // ② 2H：赤い水平距離線（xb〜x2, 高さyb）の真上に同じ太さ・強調の赤太字で
+    const xMid2=(xb+x2)/2;
+    lab(xMid2, yb-10, '2H = '+twoH.toFixed(1)+' m', '#ff5d7a', '23', 'middle');
   }
 }
 
