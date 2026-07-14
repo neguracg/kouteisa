@@ -326,7 +326,8 @@ let mode = "top";
 let VIEW = false;       // 共有リンクの閲覧モード
 let BAND_DONE = false;  // 影響帯を描画したら測線編集UIを隠す
 let curStrip = -1;      // 現在表示中の断面（←→で切替）
-let SHARED_STRIPS = null; // 共有URLから渡された2Hライン
+let SHARED_STRIPS = null; // 共有URLから渡された2Hライン（崖上・赤）
+let SHARED_STRIPS2 = null; // 共有URLから渡された2Hライン（崖下・シアン／両崖物件）
 
 /* ====== 地図 ====== */
 const map = L.map('map',{maxZoom:22}).setView([35.0933, 138.9554], 19);
@@ -698,6 +699,57 @@ async function generateBand(){
   const sEN=siteLatLngs.map(toEN);
   const aArr=sEN.map(p=>p.e*De+p.n*Dn), bArr=sEN.map(p=>p.e*Fe+p.n*Fn);
   const aMin=Math.min(...aArr),aMax=Math.max(...aArr),bMin=Math.min(...bArr),bMax=Math.max(...bArr);
+  /* ===== 両崖（崖上＋崖下）モード：敷地の両側で崖を検出し2本の2H帯を重ねる ===== */
+  if(SITE.twoSided){
+    const aStart=aMin-60, aEnd=aMax+60;   // 左右対称マージン
+    const nStrip=Math.floor((bMax-bMin)/1.0);
+    let ptsPer=Math.floor((aEnd-aStart)/step);
+    while(ptsPer*(nStrip+1)>8000){ step*=1.5; ptsPer=Math.floor((aEnd-aStart)/step); }
+    if(nStrip>90 && !confirm(`帯 ${nStrip+1} 本・約${ptsPer*(nStrip+1)}点を取得します。時間がかかります。続行?`)) return;
+    showLoading('がけ条例 該当範囲を計算中…（両崖・最大1〜2分）');
+    const prog=document.getElementById('bandProg'); bandLayer.clearLayers(); selLayer.clearLayers(); cellLayer.clearLayers(); BAND_STRIPS=[];
+    // sub-strip から崖を1つ検出し「敷地縁の崖ヘリ点→敷地内へ2H」を返す。intoSign=+1:上側sub(敷地内=+a方向)/-1:下側sub
+    const detectStripSide=(sub,intoSign)=>{
+      if(sub.length<5) return null;
+      const det=detectCore(sub);
+      if(!((det.status==='ok'||det.status==='short')&&det.baseK!=null)) return null;
+      const foot=sub[det.P[det.baseK].si], crest=sub[det.P[det.qK].si];
+      const H=crest.elev-foot.elev; if(H<=0) return null;
+      const outer=intoSign>0?sub[0]:sub[sub.length-1];        // 敷地から遠い端
+      const edge =intoSign>0?sub[sub.length-1]:sub[0];         // 敷地縁側の端
+      const type=(outer.elev>edge.elev)?'red':'cyan';          // 外側が高い→崖上(赤)/低い→崖下(シアン)
+      const near=(type==='red')?foot:crest;                    // 敷地縁側の崖ヘリ点（崖上=足元/崖下=ヘリ）
+      const twoH=mul*H;
+      const nearEN=toEN(near);
+      const reach=toLL(nearEN.e+intoSign*De*twoH, nearEN.n+intoSign*Dn*twoH); // 敷地内へ2H
+      return {type, base:{lat:near.lat,lon:near.lon}, reach, twoH, H};
+    };
+    let cnt=0;
+    try{
+      for(let b=bMin;b<=bMax+1e-6;b+=1.0){
+        const startLL=toLL(aStart*De+b*Fe, aStart*Dn+b*Fn);
+        const endLL  =toLL(aEnd*De+b*Fe,   aEnd*Dn+b*Fn);
+        const samples=await sampleSectionLL(startLL,endLL,step);
+        cnt++; if(prog) prog.textContent=`生成中 ${cnt}/${nStrip+1} 本`;
+        document.getElementById('loadingMsg').textContent=`がけ条例 該当範囲を計算中… ${cnt}/${nStrip+1} 断面`;
+        const rec={samples,startLL,endLL};
+        const upSub=samples.filter(s=>(aStart+s.dist)<=aMin);  // 敷地の外側〜縁（一方）
+        const dnSub=samples.filter(s=>(aStart+s.dist)>=aMax);  // 敷地の縁〜外側（他方）
+        [detectStripSide(upSub,+1), detectStripSide(dnSub,-1)].forEach(r=>{ if(!r) return;
+          if(r.type==='red' && !rec.base){ rec.base=r.base; rec.reach=r.reach; rec.twoH=r.twoH; rec.H=r.H; }
+          else if(r.type==='cyan' && !rec.cyan){ rec.cyan={base:r.base,reach:r.reach,twoH:r.twoH,H:r.H}; }
+        });
+        if(!rec.base && !rec.cyan) rec.none=true;
+        BAND_STRIPS.push(rec);
+      }
+    } finally { hideLoading(); }
+    drawBand();
+    BAND_DONE=true; measureLayer.clearLayers();
+    const rc=BAND_STRIPS.filter(s=>s.base).length, cc=BAND_STRIPS.filter(s=>s.cyan).length;
+    if(prog) prog.textContent=`完了：崖上(赤)${rc}本・崖下(シアン)${cc}本 検出`;
+    drawCellsAndAreas(toEN,toLL,cLat,cLon);
+    return;
+  }
   const upM=10, downM=60;
   const aStart=aMin-upM, aEnd=aMax+downM;
   const nStrip=Math.floor((bMax-bMin)/1.0);
@@ -734,28 +786,42 @@ async function generateBand(){
 /* 敷地格子の使用可否を着色＋面積ラベル（生成・共有で共通） */
 function drawCellsAndAreas(toEN,toLL,cLat,cLon){
   cellLayer.clearLayers();
-  const ok=BAND_STRIPS.filter(s=>!s.none);
+  const redOK=BAND_STRIPS.filter(s=>s.base);
+  const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
   const el=document.getElementById('bandResult'); el.style.display='block';
-  if(ok.length<2){ el.innerHTML='崖を検出できた帯が不足。敷地の配置や測線の“向き”を確認してください。'; return; }
-  // 影響帯ポリゴン（崖下端ライン→2H影響ライン）。これに対する内外で判定＝描画と一致
-  const enc=ok.map(s=>({lat:s.base.lat,lon:s.base.lon})).concat(ok.map(s=>({lat:s.reach.lat,lon:s.reach.lon})).reverse());
+  if(redOK.length<2 && cyanOK.length<2){ el.innerHTML='崖を検出できた帯が不足。敷地の配置や測線の“向き”を確認してください。'; return; }
+  // 影響帯ポリゴン（崖ヘリライン→2H影響ライン）。これに対する内外で判定＝描画と一致
+  const encRed = redOK.length>=2 ? redOK.map(s=>({lat:s.base.lat,lon:s.base.lon})).concat(redOK.map(s=>({lat:s.reach.lat,lon:s.reach.lon})).reverse()) : null;
+  const encCyan= cyanOK.length>=2 ? cyanOK.map(s=>({lat:s.cyan.base.lat,lon:s.cyan.base.lon})).concat(cyanOK.map(s=>({lat:s.cyan.reach.lat,lon:s.cyan.reach.lon})).reverse()) : null;
   const sEN=siteLatLngs.map(toEN);
   const eMin=Math.min(...sEN.map(p=>p.e)),eMax=Math.max(...sEN.map(p=>p.e));
   const nMin=Math.min(...sEN.map(p=>p.n)),nMax=Math.max(...sEN.map(p=>p.n));
-  let total=0,usable=0;
+  let total=0,usable=0,redA=0,cyanA=0,both=0;
   for(let e=eMin;e<=eMax;e+=1) for(let n=nMin;n<=nMax;n+=1){
     if(!pointInPoly(e+0.5,n+0.5,sEN)) continue;
     total++;
     const c=toLL(e+0.5,n+0.5);
-    const infl=pointInLLPoly(c.lat,c.lon,enc);   // 影響帯の内側か
-    if(!infl) usable++;
+    const inRed = !!(encRed && pointInLLPoly(c.lat,c.lon,encRed));
+    const inCyan= !!(encCyan && pointInLLPoly(c.lat,c.lon,encCyan));
+    let col;
+    if(inRed&&inCyan){col='#a05cff';both++;}
+    else if(inRed){col='#ff3b6b';redA++;}
+    else if(inCyan){col='#00b3ff';cyanA++;}
+    else {col='#19c37d';usable++;}
     const sw=toLL(e,n), ne=toLL(e+1,n+1);
-    L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:infl?'#ff3b6b':'#19c37d',fillOpacity:.30,interactive:false}).addTo(cellLayer);
+    L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:col,fillOpacity:.30,interactive:false}).addTo(cellLayer);
   }
-  const enclosed=polygonArea(enc), area=polygonArea(siteLatLngs), f=x=>x.toFixed(0);
-  L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
-    html:`<div class="arealbl">敷地 ${f(area)}㎡<br><span class="g">使用可 ${f(usable)}㎡</span> / <span class="r">影響内 ${f(total-usable)}㎡</span></div>`})}).addTo(bandLayer);
-  el.innerHTML=`<b>敷地 約${f(area)}㎡</b>（格子1m概算）<br>■ 使用可能（2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 2H影響内（要対策面積）：<b>約${f(total-usable)}㎡</b><br>■ がけ対策対象面積（2Hライン囲み）：約${f(enclosed)}㎡<br><span class="src">緑=使用可/赤=影響内。赤線=2H影響ライン。薄い灰線=各断面（クリック/←→で切替）。正式判断は実測断面図・設計者・行政協議。</span>`;
+  const area=polygonArea(siteLatLngs), f=x=>x.toFixed(0);
+  if(encCyan){   // 両崖モード：4分類表示
+    L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
+      html:`<div class="arealbl">敷地 ${f(area)}㎡<br><span class="g">使用可 ${f(usable)}㎡</span><br><span style="color:#ff6b8a">崖上 ${f(redA)}</span> / <span style="color:#38bdf8">崖下 ${f(cyanA)}</span> / <span style="color:#c9a3ff">両 ${f(both)}</span> ㎡</div>`})}).addTo(bandLayer);
+    el.innerHTML=`<b>敷地 約${f(area)}㎡</b>（格子1m概算）<br>■ 使用可能（両方の2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 崖上（赤）の影響のみ：約${f(redA)}㎡<br>■ 崖下（シアン）の影響のみ：約${f(cyanA)}㎡<br>■ 両方の影響（紫）：約${f(both)}㎡<br>■ 要対策 合計（使用可以外）：<b>約${f(total-usable)}㎡</b><br><span class="src">緑=使用可／赤=崖上2H内／シアン=崖下2H内／紫=両方。太線＝各2H影響ライン。薄い灰線=各断面（クリック/←→で切替）。正式判断は実測断面図・設計者・行政協議。</span>`;
+  } else {       // 単崖モード：従来表示（函南など）
+    const enclosed=encRed?polygonArea(encRed):0;
+    L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
+      html:`<div class="arealbl">敷地 ${f(area)}㎡<br><span class="g">使用可 ${f(usable)}㎡</span> / <span class="r">影響内 ${f(total-usable)}㎡</span></div>`})}).addTo(bandLayer);
+    el.innerHTML=`<b>敷地 約${f(area)}㎡</b>（格子1m概算）<br>■ 使用可能（2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 2H影響内（要対策面積）：<b>約${f(total-usable)}㎡</b><br>■ がけ対策対象面積（2Hライン囲み）：約${f(enclosed)}㎡<br><span class="src">緑=使用可/赤=影響内。赤線=2H影響ライン。薄い灰線=各断面（クリック/←→で切替）。正式判断は実測断面図・設計者・行政協議。</span>`;
+  }
 }
 function clearBand(){
   bandLayer.clearLayers(); selLayer.clearLayers(); cellLayer.clearLayers();
@@ -777,13 +843,22 @@ function drawBand(){
     hit.on('mouseout',()=>hit.setStyle({opacity:0}));
     hit.bindTooltip('クリックで断面図',{sticky:true});
   });
-  const ok=BAND_STRIPS.filter(s=>!s.none);
-  if(ok.length<2) return;
-  const baseLine=ok.map(s=>[s.base.lat,s.base.lon]);
-  const reachLine=ok.map(s=>[s.reach.lat,s.reach.lon]);
-  L.polygon(baseLine.concat(reachLine.slice().reverse()),{stroke:false,fillColor:'#ff3b6b',fillOpacity:.14,interactive:false}).addTo(bandLayer);
-  L.polyline(baseLine,{color:'#ffb020',weight:2,interactive:false}).addTo(bandLayer).bindTooltip('崖下端ライン',{sticky:true});
-  L.polyline(reachLine,{color:'#ff3b6b',weight:4,interactive:false}).addTo(bandLayer).bindTooltip('2H影響ライン',{sticky:true});
+  const redOK=BAND_STRIPS.filter(s=>s.base);
+  if(redOK.length>=2){
+    const baseLine=redOK.map(s=>[s.base.lat,s.base.lon]);
+    const reachLine=redOK.map(s=>[s.reach.lat,s.reach.lon]);
+    L.polygon(baseLine.concat(reachLine.slice().reverse()),{stroke:false,fillColor:'#ff3b6b',fillOpacity:.14,interactive:false}).addTo(bandLayer);
+    L.polyline(baseLine,{color:'#ffb020',weight:2,interactive:false}).addTo(bandLayer).bindTooltip(SITE.twoSided?'崖上側 崖ヘリライン':'崖下端ライン',{sticky:true});
+    L.polyline(reachLine,{color:'#ff3b6b',weight:4,interactive:false}).addTo(bandLayer).bindTooltip(SITE.twoSided?'崖上側 2H影響ライン（赤）':'2H影響ライン',{sticky:true});
+  }
+  const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
+  if(cyanOK.length>=2){
+    const baseLine=cyanOK.map(s=>[s.cyan.base.lat,s.cyan.base.lon]);
+    const reachLine=cyanOK.map(s=>[s.cyan.reach.lat,s.cyan.reach.lon]);
+    L.polygon(baseLine.concat(reachLine.slice().reverse()),{stroke:false,fillColor:'#00b3ff',fillOpacity:.14,interactive:false}).addTo(bandLayer);
+    L.polyline(baseLine,{color:'#8fd6ff',weight:2,interactive:false}).addTo(bandLayer).bindTooltip('崖下側 崖ヘリライン',{sticky:true});
+    L.polyline(reachLine,{color:'#00b3ff',weight:4,interactive:false}).addTo(bandLayer).bindTooltip('崖下側 2H影響ライン（シアン）',{sticky:true});
+  }
 }
 function addSel(p,txt,color){
   L.marker([p.lat,p.lon],{icon:L.divIcon({html:`<div style="width:13px;height:13px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 4px #000"></div>`,className:'dot-icon',iconSize:[13,13],iconAnchor:[6,6]}),zIndexOffset:1500}).addTo(selLayer)
@@ -816,14 +891,14 @@ async function showStripSection(i){
 }
 /* 共有URLで渡された2Hラインをそのまま描画（再計算しない） */
 function buildSharedBand(){
-  if(!SHARED_STRIPS||siteLatLngs.length<3) return false;
+  if((!SHARED_STRIPS&&!SHARED_STRIPS2)||siteLatLngs.length<3) return false;
   const cLat=siteLatLngs.reduce((s,p)=>s+p.lat,0)/siteLatLngs.length;
   const cLon=siteLatLngs.reduce((s,p)=>s+p.lon,0)/siteLatLngs.length;
   const mLat=111320,mLon=111320*Math.cos(rad(cLat));
   const toEN=p=>({e:(p.lon-cLon)*mLon,n:(p.lat-cLat)*mLat});
   const toLL=(e,n)=>({lat:cLat+n/mLat,lon:cLon+e/mLon});
   const sEN0=siteLatLngs.map(toEN);
-  BAND_STRIPS=SHARED_STRIPS.map(a=>{
+  BAND_STRIPS=(SHARED_STRIPS||[]).map(a=>{
     const base={lat:+a[0],lon:+a[1]}, reach={lat:+a[2],lon:+a[3]};
     const bEN=toEN(base), rEN=toEN(reach);
     let ue=rEN.e-bEN.e, un=rEN.n-bEN.n; const twoH=Math.hypot(ue,un)||1; ue/=twoH; un/=twoH;
@@ -835,6 +910,19 @@ function buildSharedBand(){
     const endLL  =toLL(bEN.e-up.e*25,  bEN.n-up.n*25);   // 下側(低・崖下端の少し先)
     return {base,reach,baseEN:bEN,up,twoH,startLL,endLL,samples:null};
   });
+  // 崖下（シアン）ライン：崖ヘリ(base)→敷地内(reach)。断面線は崖側(外)〜敷地内に張る
+  if(SHARED_STRIPS2){
+    SHARED_STRIPS2.forEach(a=>{
+      const base={lat:+a[0],lon:+a[1]}, reach={lat:+a[2],lon:+a[3]};
+      const bEN=toEN(base), rEN=toEN(reach);
+      let ue=rEN.e-bEN.e, un=rEN.n-bEN.n; const twoH=Math.hypot(ue,un)||1; ue/=twoH; un/=twoH; // 敷地内方向
+      let inMax=0; for(const pe of sEN0){const d=(pe.e-bEN.e)*ue+(pe.n-bEN.n)*un; if(d>inMax)inMax=d;}
+      const Lout=Math.max(40,twoH+15), Lin=Math.max(inMax+15,twoH+12);
+      const startLL=toLL(bEN.e-ue*Lout, bEN.n-un*Lout); // 崖側(外)
+      const endLL  =toLL(bEN.e+ue*Lin,  bEN.n+un*Lin);  // 敷地内側
+      BAND_STRIPS.push({cyan:{base,reach,twoH}, startLL, endLL, samples:null});
+    });
+  }
   bandLayer.clearLayers(); selLayer.clearLayers();
   drawBand();
   drawCellsAndAreas(toEN,toLL,cLat,cLon);
@@ -1279,17 +1367,19 @@ document.getElementById('chart').addEventListener('click',ev=>{
 
 /* ====== 共有URL ====== */
 function shareURL(){
-  const ok=BAND_STRIPS.filter(s=>!s.none);
-  if(ok.length<2){ alert('先に「2H影響帯を生成」してから共有URLを発行してください。'); return; }
+  const redOK=BAND_STRIPS.filter(s=>s.base);
+  const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
+  if(redOK.length<2 && cyanOK.length<2){ alert('先に「2H影響帯を生成」してから共有URLを発行してください。'); return; }
   const v=id=>document.getElementById(id).value;
   const st={
     site:CURRENT_SITE,
     s:[+siteAdj.lat.toFixed(7),+siteAdj.lon.toFixed(7),+siteAdj.rot.toFixed(2),+siteAdj.scale.toFixed(4)],
     p:[v('pH'),v('pAng'),v('pMul'),v('pWin'),v('pExcl'),v('p10'),v('pStep')],
-    // 計算済みの2Hライン（崖下端→2H到達点）をそのまま埋め込む＝受け手は再計算不要
-    L:ok.map(s=>[+s.base.lat.toFixed(6),+s.base.lon.toFixed(6),+s.reach.lat.toFixed(6),+s.reach.lon.toFixed(6)]),
+    // 計算済みの2Hライン（崖ヘリ→2H到達点）をそのまま埋め込む＝受け手は再計算不要
+    L:redOK.length>=2 ? redOK.map(s=>[+s.base.lat.toFixed(6),+s.base.lon.toFixed(6),+s.reach.lat.toFixed(6),+s.reach.lon.toFixed(6)]) : [],
     g:1
   };
+  if(cyanOK.length>=2) st.L2=cyanOK.map(s=>[+s.cyan.base.lat.toFixed(6),+s.cyan.base.lon.toFixed(6),+s.cyan.reach.lat.toFixed(6),+s.cyan.reach.lon.toFixed(6)]);
   const url=location.origin+location.pathname+'#d='+encodeURIComponent(JSON.stringify(st));
   navigator.clipboard.writeText(url).then(()=>{
     const r=document.getElementById('bandResult'); r.style.display='block';
@@ -1307,6 +1397,7 @@ function applyShared(){
     if(st.b){ POINTS.bottom.lat=+st.b[0]; POINTS.bottom.lon=+st.b[1]; }
     if(st.p){ ['pH','pAng','pMul','pWin','pExcl','p10','pStep'].forEach((id,k)=>{ if(st.p[k]!=null&&st.p[k]!=='') document.getElementById(id).value=st.p[k]; }); }
     if(st.L) SHARED_STRIPS=st.L;
+    if(st.L2) SHARED_STRIPS2=st.L2;
     return !!st.g;
   }catch(e){ return false; }
 }
@@ -1316,7 +1407,7 @@ function selectRepresentative(){
 }
 function fitToBand(){
   const pts=siteLatLngs.map(p=>[p.lat,p.lon]);
-  BAND_STRIPS.filter(s=>!s.none).forEach(s=>pts.push([s.reach.lat,s.reach.lon]));
+  BAND_STRIPS.forEach(s=>{ if(s.reach) pts.push([s.reach.lat,s.reach.lon]); if(s.cyan&&s.cyan.reach) pts.push([s.cyan.reach.lat,s.cyan.reach.lon]); });
   if(pts.length>1) map.fitBounds(pts,{padding:[40,40]});
 }
 
