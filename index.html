@@ -1124,6 +1124,7 @@ function detectCore(samples){
   const N=P.length;
   const epsU=0.20, epsZ=0.20, minRun=1.0, lmWinM=2.0, mergeGap=1.0;
   const win=(k,wm)=>{let a=k,b=k;while(a>0&&P[k].x-P[a-1].x<wm)a--;while(b<N-1&&P[b+1].x-P[k].x<wm)b++;return[a,b];};
+  let best=null;   // 最初の崖で確定せず、支配的な（最大Hの）がけを採用する
   for(let k=0;k<N-1;k++){
     // 条件A：u の局所最小
     const [a,b]=win(k,lmWinM);
@@ -1149,9 +1150,11 @@ function detectCore(samples){
       let uMax=-Infinity, ui=k;
       for(let t=k;t<=endIdx;t++) if(P[t].u>uMax){uMax=P[t].u;ui=t;}
       const steepToEnd=(qi>=N-2)||(endIdx>=N-2);
-      return {status:steepToEnd?'short':'ok', P, m, baseK:k, topK:ui, qK:qi, endK:endIdx, H, lowAtStart};
+      const cand={status:steepToEnd?'short':'ok', P, m, baseK:k, topK:ui, qK:qi, endK:endIdx, H, lowAtStart};
+      if(!best || H>best.H) best=cand;   // より高いがけを優先
     }
   }
+  if(best) return best;
   return {status:'none', P, m, lowAtStart};
 }
 function sampleToPick(s){return {dist:s.dist,elev:s.elev,lat:s.lat,lon:s.lon};}
