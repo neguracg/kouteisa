@@ -520,7 +520,9 @@ const SITES = {
             // 区画図(全体区画図.png)の緑部分をトレースした形状（x=東, y=北 の相対px）
             shape:[[-22.6,131.1],[14.4,131.1],[67.4,103.1],[117.4,51.1],[144.4,38.1],[155.4,-10.9],[27.4,-35.9],[23.4,-42.9],[27.4,-43.9],[34.4,-80.9],[34.4,-102.9],[-139.6,-138.9],[-160.6,-138.9],[-205.6,-88.9],[-93.6,99.1],[-23.6,130.1]], twoSided:false },
   camp:   { id:'camp', name:'キャンプ場 管理棟（再建築）', anchor:{lat:35.111704,lon:139.004726}, targetArea:60, rect:true,
-            shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:true }
+            shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:true },
+  furuya: { id:'furuya', name:'古屋 物件（崖下・再建築）', anchor:{lat:35.054742,lon:138.962508}, targetArea:60, rect:true,
+            shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:false }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
