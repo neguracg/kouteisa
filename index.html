@@ -214,7 +214,7 @@
           <li><b>標高取得</b>：国土地理院 標高API。測線方向に約0.5m間隔でサンプリングし断面プロファイル z(x) を生成（DEMは概ね1mメッシュ）。</li>
           <li><b>断面帯</b>：敷地を崖面方向に<b>幅1m</b>ごとに分割し、各断面で個別判定→2H到達点を結んだ包絡。測線は「向き」のみ使用（位置は敷地基準）。</li>
           <li><b>崖判定（u(x)法）</b>：u(x)=z(x)−tan30°·x を作り、<b>谷（局所最小）＝崖下端</b>、<b>山（局所最大）＝崖上端</b>。崖下端を通る30°線を超える区間の最高部までを <b>H</b>（静岡県建築基準条例第10条の定義に準拠）。H>2m かつ勾配30°超を「がけ」と判定。途中の局所緩斜面（ベンチ）は一体扱い。</li>
-          <li><b>2H影響ライン</b>：崖下端から崖上方向へ水平 2H。擁壁・深基礎・RC造等の対策検討範囲の目安（＝「建築不可」と断定するものではない）。</li>
+          <li><b>2H影響ライン</b>：崖下端から敷地（要対策）側へ水平 2H。擁壁・深基礎・RC造等の対策検討範囲の目安（＝「建築不可」と断定するものではない）。</li>
           <li><b>前提・限界</b>：測線の崖直交は近似。樹木・既存擁壁・構造物・土質は未反映。<b>正式判断には現地測量に基づく断面図・設計者判断・行政（沼津土木事務所）協議が必要</b>です。</li>
         </ul>
         <b>※ 現状はこの条件で算出しています。設計者の目で算出ロジックの妥当性もあわせてご確認ください。</b>
@@ -772,9 +772,14 @@ async function generateBand(){
       const rec={samples,startLL,endLL};
       if((det.status==='ok'||det.status==='short')&&det.baseK!=null){
         const base=samples[det.P[det.baseK].si], crest=samples[det.P[det.qK].si];
-        const H=crest.elev-base.elev, brng=bearingRad(base,crest);
-        Object.assign(rec,{base:{lat:base.lat,lon:base.lon},baseEN:toEN(base),up:{e:Math.sin(brng),n:Math.cos(brng)},
-          twoH:mul*H, reach:destination(base,brng,mul*H)});
+        const H=crest.elev-base.elev;
+        // 2Hは崖下端から「敷地（重心）方向」へ水平。toENは敷地重心が原点なので、崖下端の軸方向位置の符号で判定
+        const bEN=toEN(base), cEN=toEN(crest);
+        const footA=bEN.e*De+bEN.n*Dn, crestA=cEN.e*De+cEN.n*Dn;
+        let sgn=-Math.sign(footA); if(!sgn) sgn=Math.sign(footA-crestA)||1;  // 敷地重心側（崖下端→敷地）
+        const uE=sgn*De, uN=sgn*Dn;
+        const reach=toLL(bEN.e+uE*mul*H, bEN.n+uN*mul*H);
+        Object.assign(rec,{base:{lat:base.lat,lon:base.lon},baseEN:bEN,up:{e:uE,n:uN},twoH:mul*H,reach});
       } else rec.none=true;
       BAND_STRIPS.push(rec);
     }
@@ -952,7 +957,7 @@ function drawCliff(){
   makeDot(cliffLayer,[c.bottom.lat,c.bottom.lon],COL.bottom,false);
   makeLabel(cliffLayer,L.latLng(c.top.lat,c.top.lon),`崖上端 ${c.top.elev.toFixed(1)}m`,COL.top,true);
   makeLabel(cliffLayer,L.latLng(c.bottom.lat,c.bottom.lon),`崖下端 ${c.bottom.elev.toFixed(1)}m`,COL.bottom,true);
-  const brng=bearingRad(c.bottom,c.top);                 // 崖下端→崖上方向（崖下端からの水平距離2Hを測る向き）
+  const brng=twoHDir(c);                                 // 崖下端→敷地（要対策）方向へ水平2H
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round'}).addTo(cliffLayer);
   L.circleMarker([endP.lat,endP.lon],{radius:7,color:'#fff',weight:2,fillColor:'#ff3b6b',fillOpacity:1}).addTo(cliffLayer);
@@ -967,7 +972,7 @@ function confirmCliff(){
   const mul=parseFloat(document.getElementById('pMul').value)||2;
   const twoH=mul*c.H;
   const idx=confirmedCliffs.length+1;
-  const brng=bearingRad(c.bottom,c.top);   // 崖下端→崖上方向へ2H
+  const brng=twoHDir(c);   // 崖下端→敷地（要対策）方向へ2H
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.top.lat,c.top.lon],[c.bottom.lat,c.bottom.lon]],{color:'#ffb020',weight:3,opacity:.85}).addTo(confirmedLayer);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round',opacity:.95}).addTo(confirmedLayer);
@@ -1052,7 +1057,7 @@ function buildSummary(){
 `断面${i+1}（${confirmedCliffs.length?'確定':(cliffMode==='auto'?'自動判定':'手動補正')}）:
   崖上端 lat:${x.top.lat.toFixed(7)} lon:${x.top.lon.toFixed(7)} 標高:${f(x.top.elev)}m
   崖下端 lat:${x.bottom.lat.toFixed(7)} lon:${x.bottom.lon.toFixed(7)} 標高:${f(x.bottom.elev)}m
-  崖高H:${f(x.H)}m / 平均勾配:${f(ang)}° / 2H影響ライン:${f(x.twoH)}m（崖下端→崖上方向へ水平・要対策範囲）${extra}`);
+  崖高H:${f(x.H)}m / 平均勾配:${f(ang)}° / 2H影響ライン:${f(x.twoH)}m（崖下端→敷地側へ水平・要対策範囲）${extra}`);
     });
     body=lines.join('\n');
   }
@@ -1271,16 +1276,44 @@ function drawChart(){
   add('text',{x:X(s1.dist)-8,y:Y(s1.elev)-8,'text-anchor':'end',fill:COL.end,'font-weight':'bold'},'終点');
   drawPicks();
 }
+// 敷地重心を現在の断面線に射影したdist（崖下端から見た敷地の向き判定に使う）
+function siteDistOnLine(){
+  if(!siteLatLngs||siteLatLngs.length<3||SAMPLES.length<2) return null;
+  const cLat=siteLatLngs.reduce((s,p)=>s+p.lat,0)/siteLatLngs.length;
+  const cLon=siteLatLngs.reduce((s,p)=>s+p.lon,0)/siteLatLngs.length;
+  const A=SAMPLES[0], B=SAMPLES[SAMPLES.length-1];
+  const mLat=111320, mLon=111320*Math.cos(rad(A.lat));
+  const ax=(B.lon-A.lon)*mLon, ay=(B.lat-A.lat)*mLat; const L=Math.hypot(ax,ay)||1; const ux=ax/L,uy=ay/L;
+  const sx=(cLon-A.lon)*mLon, sy=(cLat-A.lat)*mLat;
+  return A.dist + (sx*ux+sy*uy);
+}
+// 崖下端から「敷地（要対策）方向」の符号（+1:dist増加側/-1:減少側）
+function twoHSign(foot,crest){
+  const sd=siteDistOnLine();
+  let s = (sd!=null)?Math.sign(sd-foot.dist):0;
+  if(!s) s = Math.sign(foot.dist-crest.dist)||1;   // 敷地情報なし時は崖上端と反対（下側）
+  return s;
+}
+// 地図上：崖下端から敷地（要対策）側への地理方位（崖軸に沿い、敷地のある側へ）
+function twoHDir(c){
+  const up=bearingRad(c.bottom,c.top);                        // 崖下端→崖上端
+  const towardCrest=Math.sign((c.top.dist||0)-(c.bottom.dist||0))||1;
+  const s=twoHSign(c.bottom,c.top);
+  return (s===towardCrest)? up : up+Math.PI;                  // 敷地が崖上端と反対側なら180°反転
+}
 function chartWindow(){
   if(picks.length!==2 || SAMPLES.length<2) return null;
   const lo=Math.min(picks[0].dist,picks[1].dist), hi=Math.max(picks[0].dist,picks[1].dist);
   const d0=SAMPLES[0].dist, d1=SAMPLES[SAMPLES.length-1].dist;
   const a=Math.min(d0,d1), b=Math.max(d0,d1);
   const mul=parseFloat(document.getElementById('pMul').value)||2;
-  const base=picks[0].elev<=picks[1].elev?picks[0]:picks[1];     // 崖下端
+  const foot=picks[0].elev<=picks[1].elev?picks[0]:picks[1];    // 崖下端
+  const crest=picks[0].elev<=picks[1].elev?picks[1]:picks[0];   // 崖上端
   const twoH=mul*Math.abs(picks[0].elev-picks[1].elev);
-  const d2=base.dist - twoH;                                     // 2H影響点（崖上方向＝小dist側）
-  const left=Math.min(lo, d2)-6, right=hi+8;                     // 2H点まで表示窓を広げる
+  const d2=foot.dist + twoHSign(foot,crest)*twoH;               // 2H影響点（敷地＝要対策側）
+  const sd=siteDistOnLine();
+  let left=Math.min(lo, d2)-6, right=Math.max(hi, d2)+8;        // 崖と2H点を必ず含む
+  if(sd!=null){ left=Math.min(left, sd); right=Math.max(right, sd); }  // 敷地位置も窓に含める＝距離を正しく表示
   return [Math.max(a, left), Math.min(b, right)];
 }
 
@@ -1314,11 +1347,11 @@ function drawPicks(){
     const zEnd=lo.elev+tanA*Math.abs(hiP.dist-lo.dist);
     add('line',{x1:SCAL.X(lo.dist),y1:SCAL.Y(lo.elev),x2:SCAL.X(hiP.dist),y2:SCAL.Y(zEnd),stroke:'#ffffff','stroke-width':1.5,'stroke-dasharray':'6,4'});
     add('text',{x:SCAL.W-SCAL.mr-4,y:SCAL.H-SCAL.mb-6,'text-anchor':'end',fill:'#cfd8e3','font-size':'11'},'白破線=30°基準線');
-    // === 2H影響ラインを断面図にも表示（崖下端から崖上方向へ水平2H）===
+    // === 2H影響ラインを断面図にも表示（崖下端から敷地＝要対策方向へ水平2H）===
     const mul=parseFloat(document.getElementById('pMul').value)||2;
     const H=Math.abs(a.elev-b.elev), twoH=mul*H;
-    const baseP=a.elev<=b.elev?a:b;                 // 崖下端
-    const d2=baseP.dist - twoH;                     // 2H点（崖上方向＝小dist側）
+    const baseP=a.elev<=b.elev?a:b, crestP=a.elev<=b.elev?b:a;   // 崖下端 / 崖上端
+    const d2=baseP.dist + twoHSign(baseP,crestP)*twoH;          // 2H点（敷地＝要対策側）
     const e2=elevAtDist(d2);
     const xb=SCAL.X(baseP.dist), yb=SCAL.Y(baseP.elev), x2=SCAL.X(d2), y2=SCAL.Y(e2);
     add('line',{x1:x2,y1:SCAL.mt,x2:x2,y2:SCAL.H-SCAL.mb,stroke:'#ff3b6b','stroke-width':1.5,'stroke-dasharray':'4,3'});   // 2H影響ライン位置
