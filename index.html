@@ -576,8 +576,9 @@ const SITES = {
             shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:true },
   furuya: { id:'furuya', name:'古屋 物件（崖下・再建築）', anchor:{lat:35.054742,lon:138.962508}, targetArea:60, rect:true,
             shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:false },
-  mikokai:{ id:'mikokai', name:'未公開 物件（崖上・190坪）', anchor:{lat:35.084331,lon:138.9646}, targetArea:628, rect:true,
-            shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:false }
+  mikokai:{ id:'mikokai', name:'未公開 物件（柏谷・公図トレース199坪）', anchor:{lat:35.084331,lon:138.9646}, targetArea:657, rect:false,
+            // 公図(kashiya_kouzu.PDF)の1230-2+1227-1合体トレース（1/500地籍図, 田方郡函南町柏谷字沖清水）
+            shape:[[151,257],[170,217],[157,209],[154,195],[166,183],[183,185],[127,-35],[136,-109],[190,-215],[180,-215],[171,-203],[159,-204],[152,-215],[40,-215],[-293,-191],[-298,-215],[-643,-215],[-625,189],[-394,210],[-34,132],[150,256]], twoSided:false }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
