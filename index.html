@@ -97,6 +97,8 @@
   .view-only{display:none}
   body.viewmode .view-only{display:block}
   #viewBanner{display:none}
+  /* ツール切替（がけ判定／平坦度）：平坦度カードは既定非表示、JSで表示を切替 */
+  .tool-flat{display:none}
   body.viewmode #viewBanner{display:block;background:rgba(63,167,255,.15);border:1px solid var(--accent);color:#cfe0ef;font-size:12px;padding:9px 11px;border-radius:8px;line-height:1.6}
   .explain{font-size:12px;line-height:1.7;color:#cdd9e5}
   .explain h3{font-size:12px;color:var(--accent);margin:10px 0 4px}
@@ -166,9 +168,16 @@
       </label>
     </div>
 
+    <div class="card edit-only" style="padding:8px">
+      <div style="display:flex;gap:6px">
+        <button id="tabCliff" class="small primary" style="flex:1" onclick="setTool('cliff')">がけ判定</button>
+        <button id="tabFlat" class="small" style="flex:1" onclick="setTool('flat')">平坦度（どこまで平らか）</button>
+      </div>
+    </div>
+
     <div id="viewBanner">📄 閲覧モード（共有リンク）：2H影響ラインと各断面の確認専用です。地図はズーム・移動でき、薄い断面線をクリックすると下に断面図が表示されます。</div>
 
-    <div class="card edit-only">
+    <div class="card edit-only tool-cliff">
       <h2>1. 測線の点を地図でクリック配置</h2>
       <div class="modes" id="modes"></div>
       <div class="hint">「始点(上側)」を崖の上の少し奥、「終点(下側)」を崖下の少し先に置き、崖をまたぐ線を引きます。<br>
@@ -176,7 +185,7 @@
         背景は右下のレイヤーで <b>陰影起伏図</b>・<b>色別標高図</b> に切替えると崖が見やすいです。</div>
     </div>
 
-    <div class="card edit-only">
+    <div class="card edit-only tool-cliff">
       <h2>2. 断面図を作成（測線を50cm刻みで取得）</h2>
       <div class="params" style="grid-template-columns:1fr 1fr">
         <label>サンプル間隔(m)<input id="pStep" type="number" step="0.1" min="0.1" value="0.5"></label>
@@ -185,7 +194,7 @@
       <div class="hint">測線上を指定間隔で標高取得→断面図を描き、u(x)=z−tan30·x 法で崖下端・上端・Hを自動判定します。</div>
     </div>
 
-    <div class="card results">
+    <div class="card results tool-cliff">
       <h2>3. 概算結果（30度基準線による自動判定）</h2>
       <div class="big">
         <span class="k" style="color:var(--muted);font-size:12px">崖高 H</span>
@@ -221,7 +230,7 @@
       </div>
     </div>
 
-    <div class="card edit-only">
+    <div class="card edit-only tool-cliff">
       <h2>4. 2H影響帯（敷地の使用可否）<span class="badge">最終成果</span></h2>
       <div class="hint" style="margin-top:0">測線を崖に<b>直交</b>させて配置 → 敷地を崖面に投影し、幅1mごとに各断面の2H到達点を計算して <b>2H影響ライン</b> を描画（点数が多く時間がかかります）。</div>
       <div style="margin-top:8px"><button class="primary" style="width:100%" onclick="generateBand()">2H影響帯を生成</button></div>
@@ -231,6 +240,24 @@
         <span id="bandProg" class="muted" style="font-size:11px"></span>
       </div>
       <div class="note" id="bandResult" style="margin-top:8px;display:none"></div>
+    </div>
+
+    <div class="card tool-flat edit-only">
+      <h2>平坦度判定（道路レベル基準）</h2>
+      <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。</div>
+      <div class="params" style="grid-template-columns:1fr 1fr;margin-top:8px">
+        <label>平ら判定 ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
+        <label>造成対応 ±cm<input id="fGradeCm" type="text" inputmode="decimal" value="50"></label>
+        <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="2"></label>
+        <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
+      </div>
+      <div class="hint">平ら判定＝この範囲内はそのまま使える目安。造成対応＝この範囲内は盛土・切土で対応しやすい目安。それを超える所は傾斜ありとして色分けします。</div>
+      <div style="margin-top:4px"><button class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button></div>
+      <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+        <button class="small" onclick="clearFlat()">クリア</button>
+        <span id="flatProg" class="muted" style="font-size:11px"></span>
+      </div>
+      <div class="note" id="flatResult" style="margin-top:8px;display:none"></div>
     </div>
 
     <details class="card edit-only">
@@ -260,7 +287,7 @@
       </div>
     </details>
 
-    <details class="card edit-only">
+    <details class="card edit-only tool-cliff">
       <summary class="dsum">各点の座標・標高 ／ Googleマップ読込</summary>
       <div class="dcont">
         <div id="points"></div>
@@ -274,7 +301,7 @@
       </div>
     </details>
 
-    <details class="card edit-only">
+    <details class="card edit-only tool-cliff">
       <summary class="dsum">判定パラメータ（既定＝静岡県の目安）</summary>
       <div class="dcont">
         <div class="params">
@@ -291,7 +318,7 @@
       </div>
     </details>
 
-    <details class="card edit-only">
+    <details class="card edit-only tool-cliff">
       <summary class="dsum">成果物テキスト（コピペ用）</summary>
       <div class="dcont">
         <textarea id="summary" readonly></textarea>
@@ -323,6 +350,7 @@ const POINTS = {
   bottom:{name:"断面図 終点(下側)", color:COL.end,   lat:35.0935590, lon:138.9552146, elev:null},
 };
 let mode = "top";
+let TOOL = 'cliff';     // 'cliff'（がけ判定） | 'flat'（平坦度判定）
 let VIEW = false;       // 共有リンクの閲覧モード
 let BAND_DONE = false;  // 影響帯を描画したら測線編集UIを隠す
 let curStrip = -1;      // 現在表示中の断面（←→で切替）
@@ -350,9 +378,34 @@ const selLayer        = L.layerGroup().addTo(map);
 const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
+const flatLayer      = L.layerGroup();   // 平坦度：セル塗り＋等高線（cliffモード開始のため既定では地図に追加しない）
+const flatRefLayer   = L.layerGroup();   // 平坦度：基準点マーカー
 
-map.on('click', e => { if(VIEW||BAND_DONE||siteAdjustMode) return; setPoint(mode, e.latlng.lat, e.latlng.lng, true); });
+map.on('click', e => {
+  if(VIEW||siteAdjustMode) return;
+  if(TOOL==='flat'){ setFlatRef(e.latlng); return; }
+  if(BAND_DONE) return;
+  setPoint(mode, e.latlng.lat, e.latlng.lng, true);
+});
 map.keyboard.disable();   // ←→キーは断面切替に使う
+
+/* ====== ツール切替（がけ判定／平坦度） ====== */
+function setTool(t){
+  TOOL=t;
+  document.getElementById('tabCliff').classList.toggle('primary', t==='cliff');
+  document.getElementById('tabFlat').classList.toggle('primary', t==='flat');
+  document.querySelectorAll('.tool-cliff').forEach(el=>{ el.style.display = (t==='cliff') ? '' : 'none'; });
+  document.querySelectorAll('.tool-flat').forEach(el=>{ el.style.display = (t==='flat') ? 'block' : 'none'; });
+  if(t==='cliff'){
+    [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer].forEach(l=>map.addLayer(l));
+    [flatLayer,flatRefLayer].forEach(l=>map.removeLayer(l));
+  }else{
+    [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer].forEach(l=>map.removeLayer(l));
+    [flatLayer,flatRefLayer].forEach(l=>map.addLayer(l));
+    document.getElementById('section').classList.add('hidden');
+  }
+  try{ if(!VIEW) localStorage.setItem('kouteisa_tool', t); }catch(e){}   // 共有(閲覧)リンクではローカル保存の好みを上書きしない
+}
 
 /* ====== モードボタン ====== */
 const modesEl = document.getElementById('modes');
@@ -631,6 +684,10 @@ function switchSite(id){
   SITE=SITES[id];
   siteAdj=loadSiteAdj();
   clearBand();      // 帯・セル・結果をリセット
+  clearFlat();      // 平坦度グリッド・結果をリセット
+  flatRefLayer.clearLayers();
+  flatRef=loadFlatRef();   // 新物件の基準点を復元（無ければnull）
+  drawFlatRef();
   drawSite();
   map.setView([siteAdj.lat,siteAdj.lon], map.getZoom());
   populateSiteSel();
@@ -938,6 +995,213 @@ function buildSharedBand(){
   BAND_DONE=true;
   return true;
 }
+
+/* ====== 平坦度判定（前面道路レベル=0基準） ====== */
+let flatRef=null;     // {lat,lon,elev}
+let FLAT_GRID=null;   // {g,cols,rows,en0:{e,n},cLat,cLon,cells:[{e,n,lat,lon,elev,dh}]}
+
+function flatRefKey(){ return 'kouteisa_flatref_'+CURRENT_SITE; }
+function saveFlatRef(){
+  try{
+    if(flatRef) localStorage.setItem(flatRefKey(), JSON.stringify(flatRef));
+    else localStorage.removeItem(flatRefKey());
+  }catch(e){}
+}
+function loadFlatRef(){
+  try{
+    const raw=localStorage.getItem(flatRefKey());
+    if(raw){ const j=JSON.parse(raw); if(j && j.lat!=null && j.lon!=null) return j; }
+  }catch(e){}
+  return null;
+}
+async function setFlatRef(latlng){
+  flatRef={lat:+latlng.lat.toFixed(7), lon:+latlng.lng.toFixed(7), elev:null};
+  drawFlatRef();
+  const prog=document.getElementById('flatProg');
+  if(prog) prog.textContent='基準点の標高を取得中…';
+  const v=await fetchOne(flatRef.lat, flatRef.lon);
+  flatRef.elev=v;
+  if(prog) prog.textContent = (v==null) ? '基準点の標高取得に失敗しました。「APIを開く」等で再クリックしてください。' : '';
+  drawFlatRef();
+  saveFlatRef();
+}
+function drawFlatRef(){
+  flatRefLayer.clearLayers();
+  if(!flatRef) return;
+  makeDot(flatRefLayer,[flatRef.lat,flatRef.lon],'#ffd166',true, ll=>{
+    flatRef.lat=+ll.lat.toFixed(7); flatRef.lon=+ll.lng.toFixed(7);
+    drawFlatRef();      // dragendでは再取得・再計算はしない（位置だけ更新）
+    saveFlatRef();
+  });
+  const txt='基準（道路）標高 '+(flatRef.elev!=null ? flatRef.elev.toFixed(1)+'m' : '取得中…');
+  makeLabel(flatRefLayer, L.latLng(flatRef.lat,flatRef.lon), txt, '#ffd166', true);
+}
+
+async function generateFlat(){
+  if(!flatRef){ alert('先に基準点（道路）を地図でクリックしてください。'); return; }
+  if(flatRef.elev==null){ alert('基準点の標高が未取得です。基準点をクリックし直してください。'); return; }
+  if(siteLatLngs.length<3){ alert('先に敷地を配置してください。'); return; }
+  const gInput=Math.max(0.5, parseFloat(document.getElementById('fGrid').value)||2);
+  let g=gInput;
+  const cLat=siteLatLngs.reduce((s,p)=>s+p.lat,0)/siteLatLngs.length;
+  const cLon=siteLatLngs.reduce((s,p)=>s+p.lon,0)/siteLatLngs.length;
+  const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+  const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
+  const sEN=siteLatLngs.map(p=>({e:(p.lon-cLon)*mLon, n:(p.lat-cLat)*mLat}));
+  const margin=8;
+  const eMin=Math.min(...sEN.map(p=>p.e))-margin, eMax=Math.max(...sEN.map(p=>p.e))+margin;
+  const nMin=Math.min(...sEN.map(p=>p.n))-margin, nMax=Math.max(...sEN.map(p=>p.n))+margin;
+  const prog=document.getElementById('flatProg');
+  let cols=Math.floor((eMax-eMin)/g)+1, rows=Math.floor((nMax-nMin)/g)+1;
+  while(cols*rows>3000){ g*=1.5; cols=Math.floor((eMax-eMin)/g)+1; rows=Math.floor((nMax-nMin)/g)+1; }
+  const adjustedMsg=(g>gInput+1e-9)?`間隔を${g.toFixed(1)}mに自動調整／`:'';
+  const grid=[];
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const e=eMin+c*g, n=nMin+r*g;
+      const ll=toLL(e,n);
+      grid.push({e,n,lat:ll.lat,lon:ll.lon,elev:null,dh:null});
+    }
+  }
+  const total=grid.length;
+  showLoading('平坦度を計算中…');
+  let done=0, idx=0; const CONC=8;
+  const run=async()=>{
+    let i;
+    while((i=idx++)<grid.length){
+      grid[i].elev=await fetchOne(grid[i].lat,grid[i].lon);
+      done++;
+      if(prog) prog.textContent=`${adjustedMsg}${done}/${total} 点`;
+      document.getElementById('loadingMsg').textContent=`平坦度を計算中… ${done}/${total} 点`;
+    }
+  };
+  try{
+    await Promise.all(Array.from({length:CONC},run));
+  } finally { hideLoading(); }
+  grid.forEach(c=>{ c.dh=(c.elev!=null)?(c.elev-flatRef.elev):null; });
+  FLAT_GRID={g,cols,rows,en0:{e:eMin,n:nMin},cLat,cLon,cells:grid};
+  const okCnt=grid.filter(c=>c.elev!=null).length;
+  if(prog) prog.textContent=`${adjustedMsg}完了：${okCnt}/${total} 点`;
+  drawFlat();
+}
+
+function drawFlat(){
+  if(!FLAT_GRID) return;
+  flatLayer.clearLayers();
+  const {g,cells,cLat,cLon}=FLAT_GRID;
+  const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+  const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
+  const flatCm=parseFloat(document.getElementById('fFlatCm').value)||20;
+  const gradeCm=parseFloat(document.getElementById('fGradeCm').value)||50;
+  const flatM=flatCm/100, gradeM=Math.max(flatM,gradeCm/100);
+  const half=g/2;
+  const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
+  const c1=[0xff,0x9d,0x5c], c2=[0xd9,0x26,0x45];   // '#ff9d5c'→'#d92645'
+  cells.forEach(cell=>{
+    if(cell.dh==null) return;   // 取得失敗点は塗らない
+    const adh=Math.abs(cell.dh);
+    let col;
+    if(adh<=flatM) col='#ffffff';
+    else if(adh<=gradeM) col='#ffd08a';
+    else{
+      const t=Math.min(1,(adh-gradeM)/Math.max(0.01,(3.0-gradeM)));   // 300cm=3.0m
+      const r=lerp(c1[0],c2[0],t), gg=lerp(c1[1],c2[1],t), b=lerp(c1[2],c2[2],t);
+      col='#'+[r,gg,b].map(x=>x.toString(16).padStart(2,'0')).join('');
+    }
+    const inside=pointInSite(cell.lat,cell.lon);
+    const op=inside?0.55:0.25;   // 敷地内外で濃淡を分ける
+    const sw=toLL(cell.e-half,cell.n-half), ne=toLL(cell.e+half,cell.n+half);
+    L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:col,fillOpacity:op,interactive:false}).addTo(flatLayer);
+  });
+  drawFlatContours();
+  computeFlatAreas();
+}
+
+/* 素朴なmarching squares：格子セル4隅の値とレベルの符号からエッジ交点を求めて線分化 */
+function marchingSquaresLevel(cells, rows, cols, g, e0, n0, level){
+  const segs=[];
+  const val=(r,c)=>cells[r*cols+c].dh;
+  const pos=(r,c)=>({e:e0+c*g, n:n0+r*g});
+  const interp=(pA,zA,pB,zB)=>{ const t=(level-zA)/(zB-zA); return {e:pA.e+(pB.e-pA.e)*t, n:pA.n+(pB.n-pA.n)*t}; };
+  for(let r=0;r<rows-1;r++){
+    for(let c=0;c<cols-1;c++){
+      const z00=val(r,c), z10=val(r,c+1), z01=val(r+1,c), z11=val(r+1,c+1);
+      if(z00==null||z10==null||z01==null||z11==null) continue;
+      const p00=pos(r,c), p10=pos(r,c+1), p01=pos(r+1,c), p11=pos(r+1,c+1);
+      const pts=[];
+      if((z00-level)*(z10-level)<0) pts.push(interp(p00,z00,p10,z10));   // 上辺
+      if((z10-level)*(z11-level)<0) pts.push(interp(p10,z10,p11,z11));   // 右辺
+      if((z01-level)*(z11-level)<0) pts.push(interp(p01,z01,p11,z11));   // 下辺
+      if((z00-level)*(z01-level)<0) pts.push(interp(p00,z00,p01,z01));   // 左辺
+      if(pts.length===2) segs.push([pts[0],pts[1]]);
+      else if(pts.length===4){ segs.push([pts[0],pts[1]]); segs.push([pts[2],pts[3]]); }   // 鞍点：素朴に2本
+    }
+  }
+  return segs;
+}
+function drawFlatContours(){
+  if(!FLAT_GRID) return;
+  const {g,cols,rows,en0,cells,cLat,cLon}=FLAT_GRID;
+  const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+  const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
+  const step=Math.max(0.05,parseFloat(document.getElementById('fContour').value)||0.5);
+  const dhs=cells.map(c=>c.dh).filter(v=>v!=null);
+  if(!dhs.length) return;
+  const lo=Math.min(...dhs), hi=Math.max(...dhs);
+  const levels=[];
+  for(let lvl=Math.ceil(lo/step)*step; lvl<=hi+1e-9; lvl+=step) levels.push(+lvl.toFixed(6));
+  if(lo<=0 && hi>=0 && !levels.some(v=>Math.abs(v)<1e-9)) levels.push(0);
+  levels.forEach(lvl=>{
+    const segs=marchingSquaresLevel(cells, rows, cols, g, en0.e, en0.n, lvl);
+    if(!segs.length) return;
+    const isZero=Math.abs(lvl)<1e-9;
+    const isMeter=Math.abs(Math.round(lvl)-lvl)<1e-6;   // 1mごとのレベル線
+    const color=isZero?'#3fa7ff':'#8fa3b8';
+    const weight=isZero?3:1;
+    segs.forEach(seg=>{
+      const a=toLL(seg[0].e,seg[0].n), b=toLL(seg[1].e,seg[1].n);
+      const pl=L.polyline([[a.lat,a.lon],[b.lat,b.lon]],{color,weight,opacity:.85,interactive:isMeter}).addTo(flatLayer);
+      if(isMeter) pl.bindTooltip(`${lvl>0?'+':''}${lvl.toFixed(0)}m`,{sticky:true});
+    });
+  });
+}
+function computeFlatAreas(){
+  const el=document.getElementById('flatResult');
+  if(!FLAT_GRID || !el) return;
+  const {g,cells}=FLAT_GRID;
+  const flatCm=parseFloat(document.getElementById('fFlatCm').value)||20;
+  const gradeCm=parseFloat(document.getElementById('fGradeCm').value)||50;
+  const flatM=flatCm/100, gradeM=Math.max(flatM,gradeCm/100);
+  const cellArea=g*g, tsubo=x=>x/3.305785;
+  let aTotal=0,aFlat=0,aGrade=0,aSteep=0;
+  cells.forEach(c=>{
+    if(!pointInSite(c.lat,c.lon)) return;
+    aTotal+=cellArea;
+    if(c.dh==null) return;   // 欠測は分類外（合計面積には含む）
+    const adh=Math.abs(c.dh);
+    if(adh<=flatM) aFlat+=cellArea;
+    else if(adh<=gradeM) aGrade+=cellArea;
+    else aSteep+=cellArea;
+  });
+  const f=x=>x.toFixed(0), t=x=>tsubo(x).toFixed(1);
+  el.style.display='block';
+  el.innerHTML=
+    `<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>　敷地面積 約${f(aTotal)}㎡（${t(aTotal)}坪）<br>`+
+    `■ そのまま平ら（±${flatCm}cm以内）：<b>約${f(aFlat)}㎡</b>（${t(aFlat)}坪）<br>`+
+    `■ 造成対応・盛土切土（±${gradeCm}cm以内）：約${f(aGrade)}㎡（${t(aGrade)}坪）<br>`+
+    `■ 傾斜あり（±${gradeCm}cm超）：約${f(aSteep)}㎡（${t(aSteep)}坪）<br>`+
+    `<span class="src">国土地理院DEM(5m)による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
+}
+function clearFlat(){
+  flatLayer.clearLayers();
+  FLAT_GRID=null;
+  const el=document.getElementById('flatResult'); if(el){el.style.display='none';el.innerHTML='';}
+  const prog=document.getElementById('flatProg'); if(prog) prog.textContent='';
+}
+['fFlatCm','fGradeCm','fContour'].forEach(id=>{
+  const elx=document.getElementById(id);
+  if(elx) elx.addEventListener('input', ()=>{ if(FLAT_GRID) drawFlat(); });
+});
 
 /* ====== 断面で指定した崖（高い方=上端） ====== */
 function getCliff(){
@@ -1473,9 +1737,15 @@ document.addEventListener('keydown',e=>{
 /* ====== 初期化 ====== */
 const _shared=applyShared();
 if(_shared){ VIEW=true; document.body.classList.add('viewmode'); }
+if(!VIEW){   // 共有（閲覧）リンクでは常にcliff固定。通常時のみ前回のツールを復元
+  try{ const savedTool=localStorage.getItem('kouteisa_tool'); if(savedTool==='flat'||savedTool==='cliff') TOOL=savedTool; }catch(e){}
+}
 populateSiteSel();
 if(!_shared){ map.setView([siteAdj.lat,siteAdj.lon], map.getZoom()); }
 drawSite();
+flatRef=loadFlatRef();
+drawFlatRef();
+setTool(TOOL);
 ['top','bottom'].forEach(k=>setPoint(k,POINTS[k].lat,POINTS[k].lon,false));
 if(!VIEW){ fetchElev('top'); fetchElev('bottom'); }
 recompute();
