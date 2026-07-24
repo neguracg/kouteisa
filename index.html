@@ -245,13 +245,16 @@
     <div class="card tool-flat edit-only">
       <h2>平坦度判定（道路レベル基準）</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。</div>
+      <div class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
+        <label>平ら ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
+        <label>軽造成 ±cm<input id="fGradeCm" type="text" inputmode="decimal" value="50"></label>
+        <label>要造成 ±cm<input id="fSteepCm" type="text" inputmode="decimal" value="80"></label>
+      </div>
       <div class="params" style="grid-template-columns:1fr 1fr;margin-top:8px">
-        <label>平ら判定 ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
-        <label>造成対応 ±cm<input id="fGradeCm" type="text" inputmode="decimal" value="50"></label>
-        <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="2"></label>
+        <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="1"></label>
         <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
       </div>
-      <div class="hint">平ら判定＝この範囲内はそのまま使える目安。造成対応＝この範囲内は盛土・切土で対応しやすい目安。それを超える所は傾斜ありとして色分けします。</div>
+      <div class="hint">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
       <div style="margin-top:4px"><button class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button></div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
         <button class="small" onclick="clearFlat()">クリア</button>
@@ -381,14 +384,80 @@ const confirmedLayer= L.layerGroup().addTo(map);
 const flatLayer      = L.layerGroup();   // 平坦度：セル塗り＋等高線（cliffモード開始のため既定では地図に追加しない）
 const flatRefLayer   = L.layerGroup();   // 平坦度：基準点マーカー
 const siteRefLayer   = L.layerGroup();   // 敷地調整：参照地番（周辺筆）。siteAdjustMode中だけ地図に追加
+const rulerLayer     = L.layerGroup().addTo(map);   // 距離計測ツール（📏）：がけ判定/平坦度どちらのタブでも使う
+
+/* 平坦度タブ中だけ地図に出す小さな凡例ボックス */
+let flatLegendDiv=null;
+const flatLegendControl = L.control({position:'bottomleft'});
+flatLegendControl.onAdd = function(){
+  flatLegendDiv = L.DomUtil.create('div');
+  flatLegendDiv.style.cssText='background:rgba(15,23,32,.85);border:1px solid #2c3e50;border-radius:8px;padding:6px 10px;font-size:11px;color:#e6edf3;line-height:1.7;box-shadow:0 0 4px #000;pointer-events:none';
+  flatLegendDiv.innerHTML=flatLegendHTML();
+  return flatLegendDiv;
+};
+function flatLegendHTML(){
+  const flatCmEl=document.getElementById('fFlatCm'), gradeCmEl=document.getElementById('fGradeCm'), steepCmEl=document.getElementById('fSteepCm');
+  const flatCm=flatCmEl?flatCmEl.value:20, gradeCm=gradeCmEl?gradeCmEl.value:50, steepCm=steepCmEl?steepCmEl.value:80;
+  return `<b>平坦度 凡例</b><br>`+
+    `<span style="color:${FLAT_COLORS.flat}">■</span>±${flatCm}cm 平ら<br>`+
+    `<span style="color:${FLAT_COLORS.grade}">■</span>±${gradeCm}cm 軽い造成で可<br>`+
+    `<span style="color:${FLAT_COLORS.steep}">■</span>±${steepCm}cm 要造成<br>`+
+    `<span style="color:${FLAT_COLORS.over}">■</span>それ以上 傾斜地`;
+}
+function updateFlatLegend(){ if(flatLegendDiv) flatLegendDiv.innerHTML=flatLegendHTML(); }
 
 map.on('click', e => {
+  if(measureActive){ handleMeasureClick(e.latlng); return; }   // 距離計測モード中は既存のクリック動作(測線配置・平坦度基準点)を抑止
   if(VIEW||siteAdjustMode) return;
   if(TOOL==='flat'){ setFlatRef(e.latlng); return; }
   if(BAND_DONE) return;
   setPoint(mode, e.latlng.lat, e.latlng.lng, true);
 });
 map.keyboard.disable();   // ←→キーは断面切替に使う
+
+/* ====== 距離計測ツール（📏）：地図上で任意2点間の距離をサッと測る。がけ判定/平坦度どちらのタブでも使用可 ====== */
+let measureActive=false, measurePts=[];
+const measureControl = L.control({position:'topleft'});
+measureControl.onAdd = function(){
+  const div=L.DomUtil.create('div','leaflet-bar');
+  const btn=L.DomUtil.create('a','',div);
+  btn.href='#'; btn.title='2点間の距離を計測'; btn.id='measureBtn';
+  btn.innerHTML='📏';
+  btn.style.cssText='font-size:15px;line-height:26px;width:26px;height:26px;display:block;text-align:center;text-decoration:none;background:#fff';
+  L.DomEvent.on(btn,'click', L.DomEvent.stop).on(btn,'click', toggleMeasure);
+  L.DomEvent.disableClickPropagation(div);
+  return div;
+};
+function toggleMeasure(){
+  measureActive=!measureActive;
+  if(!measureActive) clearMeasure();
+  const btn=document.getElementById('measureBtn');
+  if(btn) btn.style.background = measureActive ? '#3fa7ff' : '#fff';
+  map.getContainer().style.cursor = measureActive ? 'crosshair' : '';
+}
+function handleMeasureClick(latlng){
+  if(measurePts.length>=2){ measurePts=[]; rulerLayer.clearLayers(); }
+  measurePts.push(latlng);
+  drawMeasureTool();
+}
+function drawMeasureTool(){
+  rulerLayer.clearLayers();
+  measurePts.forEach(p=>{
+    L.circleMarker(p,{radius:5,color:'#fff',weight:2,fillColor:'#ffd166',fillOpacity:1,interactive:false}).addTo(rulerLayer);
+  });
+  if(measurePts.length===2){
+    const [a,b]=measurePts;
+    L.polyline([a,b],{color:'#ffd166',weight:3,interactive:false}).addTo(rulerLayer);
+    const dist=haversine({lat:a.lat,lon:a.lng},{lat:b.lat,lon:b.lng});
+    const mid=L.latLng((a.lat+b.lat)/2,(a.lng+b.lng)/2);
+    L.marker(mid,{interactive:false,zIndexOffset:1200,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,10],
+      html:`<div style="font:700 13px/1.3 sans-serif;color:#ffd166;background:rgba(15,23,32,.88);padding:2px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 0 4px #000;border:1px solid #ffd166">${dist.toFixed(1)} m</div>`})}).addTo(rulerLayer);
+  }
+}
+function clearMeasure(){ rulerLayer.clearLayers(); measurePts=[]; }
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape' && measureActive) toggleMeasure();
+});
 
 /* ====== ツール切替（がけ判定／平坦度） ====== */
 function setTool(t){
@@ -400,10 +469,13 @@ function setTool(t){
   if(t==='cliff'){
     [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer].forEach(l=>map.addLayer(l));
     [flatLayer,flatRefLayer].forEach(l=>map.removeLayer(l));
+    flatLegendControl.remove();
   }else{
     [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer].forEach(l=>map.removeLayer(l));
     [flatLayer,flatRefLayer].forEach(l=>map.addLayer(l));
     document.getElementById('section').classList.add('hidden');
+    flatLegendControl.addTo(map);
+    updateFlatLegend();
   }
   try{ if(!VIEW) localStorage.setItem('kouteisa_tool', t); }catch(e){}   // 共有(閲覧)リンクではローカル保存の好みを上書きしない
 }
@@ -579,15 +651,19 @@ const SITES = {
             shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:false },
   mikokai:{ id:'mikokai', name:'未公開 物件（柏谷・公図トレース199坪）', anchor:{lat:35.084331,lon:138.9646}, targetArea:657, rect:false,
             // 公図(kashiya_kouzu.PDF)の1230-2+1227-1合体トレース（1/500地籍図, 田方郡函南町柏谷字沖清水）
-            shape:[[151,257],[170,217],[157,209],[154,195],[166,183],[183,185],[127,-35],[136,-109],[190,-215],[180,-215],[171,-203],[159,-204],[152,-215],[40,-215],[-293,-191],[-298,-215],[-643,-215],[-625,189],[-394,210],[-34,132],[150,256]], twoSided:false,
+            // 【再トレース(3rd pass)】南辺が座標グリッド線(筆界ではない薄い横ドット線)に誤って切られていた
+            // バグを修正。手法は8連結の小連結成分除去(座標線のドットだけを除去)＋矛盾検出時の局所復元
+            // (詳細・再検算値は_input/kashiya/trace_refs.pyのdocstring及びWORKLOG参照)。
+            // 再検算: 1230-2=360.6m2, 1227-1=277.0m2, 比1.302(登記371:286=1.297に一致), 合計637.5m2(登記657の97%)
+            shape:[[153,270.7],[172,230.7],[159,222.7],[156,208.7],[168,196.7],[185,198.7],[129,-21.3],[138,-95.3],[192,-201.3],[182,-201.3],[173,-189.3],[161,-190.3],[154,-201.3],[42,-201.3],[-291,-177.3],[-332,-389.3],[-645,-302.3],[-623,202.7],[-392,223.7],[-32,145.7],[152,269.7]], twoSided:false,
             // 調整用の参照地番（周辺筆。同一公図・同一座標系でトレース。詳細は_input/kashiya/trace_refs.py）。
             // 「敷地を調整」モード中だけ地図に破線表示（位置合わせの目安。1228-6のみ道路として色分け）
             refShapes:[
-              {no:'1228-16', pts:[[-630,189],[-644,-113],[-684,-119],[-1003,-161],[-1046,133],[-631,188]]},
-              {no:'1228-5', pts:[[-1051,132],[-1008,-158],[-1020,-164],[-1432,-215],[-1474,74],[-1052,131]]},
-              {no:'1228-12', pts:[[-1406,-219],[-1019,-219],[-998,-416],[-1079,-424],[-1079,-456],[-1389,-497],[-1431,-224],[-1407,-220]]},
-              {no:'1228-11', pts:[[-1014,-219],[-869,-219],[-869,-231],[-858,-241],[-843,-239],[-836,-219],[-648,-219],[-651,-321],[-609,-436],[-930,-481],[-938,-411],[-994,-415],[-1014,-220]]},
-              {no:'1228-6', pts:[[-948,-415],[-941,-416],[-842,-1424],[-836,-1437],[-912,-1437],[-914,-1419],[-926,-1426],[-920,-1430],[-920,-1437],[-975,-1437],[-978,-1413],[-1075,-428],[-949,-416]], isRoad:true}
+              {no:'1228-16', pts:[[-628,202.7],[-642,-99.3],[-682,-105.3],[-1001,-147.3],[-1044,146.7],[-629,201.7]]},
+              {no:'1228-5', pts:[[-1049,145.7],[-1006,-144.3],[-1018,-150.3],[-1430,-201.3],[-1472,87.7],[-1050,144.7]]},
+              {no:'1228-12', pts:[[-1026,-155.3],[-996,-402.3],[-1077,-410.3],[-1075,-441.3],[-1089,-444.3],[-1387,-483.3],[-1429,-209.3],[-1347,-205.3],[-1376,-201.3],[-1027,-156.3]]},
+              {no:'1228-11', pts:[[-646,-104.3],[-649,-307.3],[-607,-423.3],[-928,-467.3],[-936,-397.3],[-992,-401.3],[-994,-387.3],[-1018,-154.3],[-647,-105.3]]},
+              {no:'1228-6', pts:[[-946,-401.3],[-939,-402.3],[-840,-1410.3],[-834,-1423.3],[-910,-1423.3],[-912,-1405.3],[-924,-1412.3],[-918,-1416.3],[-918,-1423.3],[-973,-1423.3],[-976,-1399.3],[-1073,-414.3],[-947,-402.3]], isRoad:true}
             ] }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
@@ -1050,12 +1126,17 @@ function loadFlatRef(){
   return null;
 }
 async function setFlatRef(latlng){
-  flatRef={lat:+latlng.lat.toFixed(7), lon:+latlng.lng.toFixed(7), elev:null};
+  flatRef={lat:+latlng.lat.toFixed(7), lon:+latlng.lng.toFixed(7), elev:null, hsrc:null};
   drawFlatRef();
   const prog=document.getElementById('flatProg');
   if(prog) prog.textContent='基準点の標高を取得中…';
   const v=await fetchOne(flatRef.lat, flatRef.lon);
   flatRef.elev=v;
+  try{   // DEMのデータ源(hsrc: 例"1m（レーザ）"/"5mメッシュ"等)を1点だけ記録し、注記表示に使う
+    const r=await fetch(apiUrl(flatRef.lat, flatRef.lon));
+    const j=await r.json();
+    flatRef.hsrc=j.hsrc||null;
+  }catch(e){}
   if(prog) prog.textContent = (v==null) ? '基準点の標高取得に失敗しました。「APIを開く」等で再クリックしてください。' : '';
   drawFlatRef();
   saveFlatRef();
@@ -1076,7 +1157,7 @@ async function generateFlat(){
   if(!flatRef){ alert('先に基準点（道路）を地図でクリックしてください。'); return; }
   if(flatRef.elev==null){ alert('基準点の標高が未取得です。基準点をクリックし直してください。'); return; }
   if(siteLatLngs.length<3){ alert('先に敷地を配置してください。'); return; }
-  const gInput=Math.max(0.5, parseFloat(document.getElementById('fGrid').value)||2);
+  const gInput=Math.max(0.5, parseFloat(document.getElementById('fGrid').value)||1);
   let g=gInput;
   const cLat=siteLatLngs.reduce((s,p)=>s+p.lat,0)/siteLatLngs.length;
   const cLon=siteLatLngs.reduce((s,p)=>s+p.lon,0)/siteLatLngs.length;
@@ -1120,26 +1201,34 @@ async function generateFlat(){
   drawFlat();
 }
 
+// 平坦度の色（3段階＋赤グラデ）。凡例ボックス・結果テキストとも共通で使う。
+const FLAT_COLORS = {flat:'#3b82f6', grade:'#22c55e', steep:'#f59e0b', over:'#d92645'};
+function flatThresholds(){
+  const flatCm=parseFloat(document.getElementById('fFlatCm').value)||20;
+  const gradeCm=parseFloat(document.getElementById('fGradeCm').value)||50;
+  const steepCm=parseFloat(document.getElementById('fSteepCm').value)||80;
+  const flatM=flatCm/100, gradeM=Math.max(flatM,gradeCm/100), steepM=Math.max(gradeM,steepCm/100);
+  return {flatCm,gradeCm,steepCm,flatM,gradeM,steepM};
+}
 function drawFlat(){
   if(!FLAT_GRID) return;
   flatLayer.clearLayers();
   const {g,cells,cLat,cLon}=FLAT_GRID;
   const mLat=111320, mLon=111320*Math.cos(rad(cLat));
   const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
-  const flatCm=parseFloat(document.getElementById('fFlatCm').value)||20;
-  const gradeCm=parseFloat(document.getElementById('fGradeCm').value)||50;
-  const flatM=flatCm/100, gradeM=Math.max(flatM,gradeCm/100);
+  const {flatM,gradeM,steepM}=flatThresholds();
   const half=g/2;
   const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
-  const c1=[0xff,0x9d,0x5c], c2=[0xd9,0x26,0x45];   // '#ff9d5c'→'#d92645'
+  const c1=[0xff,0x9d,0x5c], c2=[0xd9,0x26,0x45];   // '#ff9d5c'→'#d92645'（傾斜地グラデ）
   cells.forEach(cell=>{
     if(cell.dh==null) return;   // 取得失敗点は塗らない
     const adh=Math.abs(cell.dh);
     let col;
-    if(adh<=flatM) col='#ffffff';
-    else if(adh<=gradeM) col='#ffd08a';
+    if(adh<=flatM) col=FLAT_COLORS.flat;
+    else if(adh<=gradeM) col=FLAT_COLORS.grade;
+    else if(adh<=steepM) col=FLAT_COLORS.steep;
     else{
-      const t=Math.min(1,(adh-gradeM)/Math.max(0.01,(3.0-gradeM)));   // 300cm=3.0m
+      const t=Math.min(1,(adh-steepM)/Math.max(0.01,(3.0-steepM)));   // 300cm=3.0m
       const r=lerp(c1[0],c2[0],t), gg=lerp(c1[1],c2[1],t), b=lerp(c1[2],c2[2],t);
       col='#'+[r,gg,b].map(x=>x.toString(16).padStart(2,'0')).join('');
     }
@@ -1263,11 +1352,9 @@ function computeFlatAreas(){
   const el=document.getElementById('flatResult');
   if(!FLAT_GRID || !el) return null;
   const {g,cells}=FLAT_GRID;
-  const flatCm=parseFloat(document.getElementById('fFlatCm').value)||20;
-  const gradeCm=parseFloat(document.getElementById('fGradeCm').value)||50;
-  const flatM=flatCm/100, gradeM=Math.max(flatM,gradeCm/100);
+  const {flatCm,gradeCm,steepCm,flatM,gradeM,steepM}=flatThresholds();
   const cellArea=g*g, tsubo=x=>x/3.305785;
-  let aTotal=0,aFlat=0,aGrade=0,aSteep=0;
+  let aTotal=0,aFlat=0,aGrade=0,aSteep=0,aOver=0;
   cells.forEach(c=>{
     if(!pointInSite(c.lat,c.lon)) return;
     aTotal+=cellArea;
@@ -1275,18 +1362,21 @@ function computeFlatAreas(){
     const adh=Math.abs(c.dh);
     if(adh<=flatM) aFlat+=cellArea;
     else if(adh<=gradeM) aGrade+=cellArea;
-    else aSteep+=cellArea;
+    else if(adh<=steepM) aSteep+=cellArea;
+    else aOver+=cellArea;
   });
   const f=x=>x.toFixed(0), t=x=>tsubo(x).toFixed(1);
+  const hsrcTxt = (flatRef && flatRef.hsrc) ? `国土地理院DEM（当地点は${flatRef.hsrc}。データ源は地点により異なる）` : '国土地理院DEM（データ源は地点により異なる＝5mメッシュとは限らない）';
   el.style.display='block';
   el.innerHTML=
     `<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>　敷地面積 約${f(aTotal)}㎡（${t(aTotal)}坪）<br>`+
-    `■ そのまま平ら（±${flatCm}cm以内）：<b>約${f(aFlat)}㎡</b>（${t(aFlat)}坪）<br>`+
-    `■ 造成対応・盛土切土（±${gradeCm}cm以内）：約${f(aGrade)}㎡（${t(aGrade)}坪）<br>`+
-    `■ 傾斜あり（±${gradeCm}cm超）：約${f(aSteep)}㎡（${t(aSteep)}坪）<br>`+
-    `<span style="color:#fff">□</span>白枠=そのまま平ら／<span style="color:#ff9d1a">- -</span>橙破線=造成対応（地図上の領域アウトライン）<br>`+
-    `<span class="src">国土地理院DEM(5m)による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
-  return {flatCm,gradeCm,flatM,gradeM,aTotal,aFlat,aGrade,aSteep};
+    `<span style="color:${FLAT_COLORS.flat}">■</span>平ら（±${flatCm}cm以内・そのまま使える目安）：<b>約${f(aFlat)}㎡</b>（${t(aFlat)}坪）<br>`+
+    `<span style="color:${FLAT_COLORS.grade}">■</span>軽い造成で可（±${gradeCm}cm以内）：約${f(aGrade)}㎡（${t(aGrade)}坪）<br>`+
+    `<span style="color:${FLAT_COLORS.steep}">■</span>要造成（±${steepCm}cm以内）：約${f(aSteep)}㎡（${t(aSteep)}坪）<br>`+
+    `<span style="color:${FLAT_COLORS.over}">■</span>傾斜地（±${steepCm}cm超）：約${f(aOver)}㎡（${t(aOver)}坪）<br>`+
+    `<span style="color:${FLAT_COLORS.flat}">―</span>青実線=平ら／<span style="color:${FLAT_COLORS.grade}">- -</span>緑破線=軽造成／<span style="color:${FLAT_COLORS.steep}">- -</span>橙破線=要造成（地図上の領域アウトライン）<br>`+
+    `<span class="src">${hsrcTxt}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
+  return {flatCm,gradeCm,steepCm,flatM,gradeM,steepM,aTotal,aFlat,aGrade,aSteep,aOver};
 }
 
 /* ====== 平坦度エリアの枠付き描画（連結成分ごとに外周をトレース） ====== */
@@ -1361,13 +1451,13 @@ function traceMaskOutline(inMask, rows, cols, g, e0, n0){
   }
   return loops;
 }
-// 平ら／造成対応エリアの領域アウトラインを描画（drawFlatの後段。面積は computeFlatAreas の値を使い回す＝一致保証）
+// 平ら／軽造成／要造成エリアの領域アウトラインを描画（drawFlatの後段。面積は computeFlatAreas の値を使い回す＝一致保証）
 function drawFlatOutlines(areas){
   if(!FLAT_GRID || !areas) return;
   const {g,cols,rows,en0,cells,cLat,cLon}=FLAT_GRID;
   const mLat=111320, mLon=111320*Math.cos(rad(cLat));
   const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
-  const {flatCm,gradeCm,flatM,gradeM,aFlat,aGrade}=areas;
+  const {flatCm,gradeCm,steepCm,flatM,gradeM,steepM,aFlat,aGrade,aSteep}=areas;
   const tsubo=x=>x/3.305785, f=x=>x.toFixed(0), t=x=>tsubo(x).toFixed(1);
   const inSiteArr=cells.map(c=>pointInSite(c.lat,c.lon));
   const MIN_ISLAND=2;   // 1〜2セルの飛び地は枠線を描かない（面積計算には影響させない）
@@ -1385,17 +1475,21 @@ function drawFlatOutlines(areas){
     return loops.length;
   };
 
-  // 造成対応（平らエリアを含む外側輪郭）：橙の破線枠、塗りなし。先に描いて内側に白枠を重ねる
+  // 描画順：外側(要造成・広い)→内側(軽造成)→最内側(平ら)。塗りは既にセル色があるので枠線のみ。
+  const steepMask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && Math.abs(c.dh)<=steepM);
+  drawGroup(steepMask, {
+    style:{color:FLAT_COLORS.steep, weight:2, dashArray:'7,5', fill:false, interactive:true},
+    tooltip:`要造成（±${steepCm}cm）約${f(aSteep)}㎡（${t(aSteep)}坪）`
+  });
   const gradeMask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && Math.abs(c.dh)<=gradeM);
   drawGroup(gradeMask, {
-    style:{color:'#ff9d1a', weight:2, dashArray:'7,5', fill:false, interactive:true},
-    tooltip:`造成対応（±${gradeCm}cm）約${f(aGrade)}㎡（${t(aGrade)}坪）`
+    style:{color:FLAT_COLORS.grade, weight:2, dashArray:'7,5', fill:false, interactive:true},
+    tooltip:`軽い造成で可（±${gradeCm}cm）約${f(aGrade)}㎡（${t(aGrade)}坪）`
   });
-  // そのまま平ら：太い白枠＋内側に緑系の淡い塗り
   const flatMask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && Math.abs(c.dh)<=flatM);
   drawGroup(flatMask, {
-    style:{color:'#ffffff', weight:3, fill:true, fillColor:'#3ecf7e', fillOpacity:0.18, interactive:true},
-    tooltip:`そのまま平ら（±${flatCm}cm）約${f(aFlat)}㎡（${t(aFlat)}坪）`
+    style:{color:FLAT_COLORS.flat, weight:3, fill:false, interactive:true},
+    tooltip:`平ら（±${flatCm}cm）約${f(aFlat)}㎡（${t(aFlat)}坪）`
   });
 }
 
@@ -1405,9 +1499,9 @@ function clearFlat(){
   const el=document.getElementById('flatResult'); if(el){el.style.display='none';el.innerHTML='';}
   const prog=document.getElementById('flatProg'); if(prog) prog.textContent='';
 }
-['fFlatCm','fGradeCm','fContour'].forEach(id=>{
+['fFlatCm','fGradeCm','fSteepCm','fContour'].forEach(id=>{
   const elx=document.getElementById(id);
-  if(elx) elx.addEventListener('input', ()=>{ if(FLAT_GRID) drawFlat(); });
+  if(elx) elx.addEventListener('input', ()=>{ if(FLAT_GRID) drawFlat(); updateFlatLegend(); });
 });
 
 /* ====== 断面で指定した崖（高い方=上端） ====== */
@@ -1961,6 +2055,7 @@ const _shared=applyShared();
 if(_shared){ VIEW=true; document.body.classList.add('viewmode'); }
 if(!VIEW){   // 共有（閲覧）リンクでは常にcliff固定。通常時のみ前回のツールを復元
   try{ const savedTool=localStorage.getItem('kouteisa_tool'); if(savedTool==='flat'||savedTool==='cliff') TOOL=savedTool; }catch(e){}
+  measureControl.addTo(map);   // 距離計測ツールは編集モードのみ（共有/閲覧では出さない）
 }
 populateSiteSel();
 if(!_shared){ map.setView([siteAdj.lat,siteAdj.lon], map.getZoom()); }
