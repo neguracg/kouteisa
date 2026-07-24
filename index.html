@@ -380,6 +380,7 @@ const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
 const flatLayer      = L.layerGroup();   // 平坦度：セル塗り＋等高線（cliffモード開始のため既定では地図に追加しない）
 const flatRefLayer   = L.layerGroup();   // 平坦度：基準点マーカー
+const siteRefLayer   = L.layerGroup();   // 敷地調整：参照地番（周辺筆）。siteAdjustMode中だけ地図に追加
 
 map.on('click', e => {
   if(VIEW||siteAdjustMode) return;
@@ -578,7 +579,16 @@ const SITES = {
             shape:[[-1.2,-0.8],[1.2,-0.8],[1.2,0.8],[-1.2,0.8]], twoSided:false },
   mikokai:{ id:'mikokai', name:'未公開 物件（柏谷・公図トレース199坪）', anchor:{lat:35.084331,lon:138.9646}, targetArea:657, rect:false,
             // 公図(kashiya_kouzu.PDF)の1230-2+1227-1合体トレース（1/500地籍図, 田方郡函南町柏谷字沖清水）
-            shape:[[151,257],[170,217],[157,209],[154,195],[166,183],[183,185],[127,-35],[136,-109],[190,-215],[180,-215],[171,-203],[159,-204],[152,-215],[40,-215],[-293,-191],[-298,-215],[-643,-215],[-625,189],[-394,210],[-34,132],[150,256]], twoSided:false }
+            shape:[[151,257],[170,217],[157,209],[154,195],[166,183],[183,185],[127,-35],[136,-109],[190,-215],[180,-215],[171,-203],[159,-204],[152,-215],[40,-215],[-293,-191],[-298,-215],[-643,-215],[-625,189],[-394,210],[-34,132],[150,256]], twoSided:false,
+            // 調整用の参照地番（周辺筆。同一公図・同一座標系でトレース。詳細は_input/kashiya/trace_refs.py）。
+            // 「敷地を調整」モード中だけ地図に破線表示（位置合わせの目安。1228-6のみ道路として色分け）
+            refShapes:[
+              {no:'1228-16', pts:[[-630,189],[-644,-113],[-684,-119],[-1003,-161],[-1046,133],[-631,188]]},
+              {no:'1228-5', pts:[[-1051,132],[-1008,-158],[-1020,-164],[-1432,-215],[-1474,74],[-1052,131]]},
+              {no:'1228-12', pts:[[-1406,-219],[-1019,-219],[-998,-416],[-1079,-424],[-1079,-456],[-1389,-497],[-1431,-224],[-1407,-220]]},
+              {no:'1228-11', pts:[[-1014,-219],[-869,-219],[-869,-231],[-858,-241],[-843,-239],[-836,-219],[-648,-219],[-651,-321],[-609,-436],[-930,-481],[-938,-411],[-994,-415],[-1014,-220]]},
+              {no:'1228-6', pts:[[-948,-415],[-941,-416],[-842,-1424],[-836,-1437],[-912,-1437],[-914,-1419],[-926,-1426],[-920,-1430],[-920,-1437],[-975,-1437],[-978,-1413],[-1075,-428],[-949,-416]], isRoad:true}
+            ] }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
@@ -602,17 +612,38 @@ let siteAdj=loadSiteAdj();
 let siteLatLngs=[];
 let siteAdjustMode=false;
 
+// shape配列(px単位)を、与えられた正規化変換(重心cx,cy／倍率s／回転cr,sr／原点lat0,lon0／m換算mLat,mLon)でlatlng配列に変換する。
+// buildSite()は自身のSITE.shapeにこれを使い、参照地番(refShapes)にも「同じ」変換(xf)を渡すことで
+// メイン敷地と完全に同じ原点・向き・スケールを共有する（相対サイズ・相対位置を保つ＝それぞれを正規化しない）。
+function shapeToLatLngs(pts, xf){
+  return pts.map(p=>{
+    const x=(p[0]-xf.cx)*xf.s, y=(p[1]-xf.cy)*xf.s;
+    const xr=x*xf.cr-y*xf.sr, yr=x*xf.sr+y*xf.cr;
+    return {lat:xf.lat0+yr/xf.mLat, lon:xf.lon0+xr/xf.mLon};
+  });
+}
+let SITE_XFORM=null;   // 直近のbuildSite()で使った変換パラメータ（refShapesの描画で共有）
 function buildSite(){
-  const sh=SITE.shape.map(p=>({x:p[0],y:p[1]}));
-  const cx=sh.reduce((s,p)=>s+p.x,0)/sh.length, cy=sh.reduce((s,p)=>s+p.y,0)/sh.length;
-  sh.forEach(p=>{p.x-=cx;p.y-=cy;});
-  let a0=0; for(let i=0;i<sh.length;i++){const p=sh[i],q=sh[(i+1)%sh.length];a0+=p.x*q.y-q.x*p.y;} a0=Math.abs(a0/2);
+  const sh=SITE.shape;
+  const cx=sh.reduce((s,p)=>s+p[0],0)/sh.length, cy=sh.reduce((s,p)=>s+p[1],0)/sh.length;
+  let a0=0; for(let i=0;i<sh.length;i++){const p=sh[i],q=sh[(i+1)%sh.length];a0+=(p[0]-cx)*(q[1]-cy)-(q[0]-cx)*(p[1]-cy);} a0=Math.abs(a0/2);
   const s=Math.sqrt(SITE.targetArea/a0)*siteAdj.scale, r=rad(siteAdj.rot), cr=Math.cos(r), sr=Math.sin(r);
   const lat0=siteAdj.lat, lon0=siteAdj.lon;
   const mLat=111320, mLon=111320*Math.cos(rad(lat0));
-  return sh.map(p=>{
-    const x=p.x*s, y=p.y*s, xr=x*cr-y*sr, yr=x*sr+y*cr;
-    return {lat:lat0+yr/mLat, lon:lon0+xr/mLon};
+  SITE_XFORM={cx,cy,s,cr,sr,lat0,lon0,mLat,mLon};
+  return shapeToLatLngs(sh, SITE_XFORM);
+}
+// 調整用の参照地番（周辺筆）。siteAdjustMode中だけ、メイン敷地と同じSITE_XFORMで描画。
+function drawSiteRefs(){
+  siteRefLayer.clearLayers();
+  if(!siteAdjustMode || !SITE.refShapes || !SITE_XFORM) return;
+  SITE.refShapes.forEach(ref=>{
+    const latlngs=shapeToLatLngs(ref.pts, SITE_XFORM).map(p=>[p.lat,p.lon]);
+    const color = ref.isRoad ? '#5ab0ff' : '#9fb0c0';
+    L.polygon(latlngs,{color,weight:2,dashArray:'6,4',fill:true,fillOpacity:0.08,interactive:false}).addTo(siteRefLayer);
+    const c=latlngs.reduce((s,p)=>[s[0]+p[0],s[1]+p[1]],[0,0]).map(v=>v/latlngs.length);
+    L.marker(c,{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
+      html:`<div style="font:700 10px/1.2 sans-serif;color:${color};background:rgba(15,23,32,.75);padding:1px 4px;border-radius:4px;white-space:nowrap">${ref.no}</div>`})}).addTo(siteRefLayer);
   });
 }
 function redrawSitePolygon(){
@@ -622,6 +653,7 @@ function redrawSitePolygon(){
   const siteLabel = SITE.rect ? '敷地（矩形・航空写真で調整）' : '敷地（区画図トレース）';
   poly.bindTooltip(`${siteLabel}約${polygonArea(siteLatLngs).toFixed(0)}㎡`+(siteAdjustMode?'／ドラッグで移動':''),{sticky:true});
   if(siteAdjustMode) poly.on('mousedown', startSiteDrag);
+  drawSiteRefs();
   updateSiteReadout();
 }
 /* 緑のポリゴン本体をつかんで移動 */
@@ -660,6 +692,8 @@ function toggleAdjust(){
   siteAdjustMode=!siteAdjustMode;
   document.getElementById('siteAdjBtn').textContent=siteAdjustMode?'調整を終了':'敷地を調整';
   document.getElementById('siteCtrl').style.display=siteAdjustMode?'block':'none';
+  if(siteAdjustMode){ map.addLayer(siteRefLayer); }
+  else{ siteRefLayer.clearLayers(); map.removeLayer(siteRefLayer); }
   drawSite();
 }
 function rotateSite(d){ siteAdj.rot=(siteAdj.rot+d); saveSiteAdj(); drawSite(); }
@@ -1115,7 +1149,8 @@ function drawFlat(){
     L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:col,fillOpacity:op,interactive:false}).addTo(flatLayer);
   });
   drawFlatContours();
-  computeFlatAreas();
+  const areas=computeFlatAreas();
+  drawFlatOutlines(areas);
 }
 
 /* 素朴なmarching squares：格子セル4隅の値とレベルの符号からエッジ交点を求めて線分化 */
@@ -1140,6 +1175,62 @@ function marchingSquaresLevel(cells, rows, cols, g, e0, n0, level){
   }
   return segs;
 }
+// 等高線専用にdhグリッドを平滑化（3x3単純平均、nullは除外して正規化）。セル塗り・面積計算のcells本体は変更しない。
+// 検証済み：mikokai実データでの断片化(孤立セグメント)は、素の marching squares では全体の約76%(70/92チェイン)。
+// 3x3平滑化を複数レベルでスイープした結果、1パスが最も効果的（総チェイン数92→62、孤立数70→45）で、
+// 2パス以上・5x5幅は一部レベルでかえって悪化したため、あえて1パスのみを採用（詳細はWORKLOG参照）。
+function smoothDhGrid(cells, rows, cols, passes){
+  let vals=cells.map(c=>c.dh);
+  for(let p=0;p<passes;p++){
+    const out=new Array(vals.length).fill(null);
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+      let s=0,n=0;
+      for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+        const rr=r+dr, cc=c+dc;
+        if(rr<0||rr>=rows||cc<0||cc>=cols) continue;
+        const v=vals[rr*cols+cc];
+        if(v==null) continue;
+        s+=v; n++;
+      }
+      out[r*cols+c]= n? s/n : null;
+    }
+    vals=out;
+  }
+  return cells.map((c,i)=>({...c, dh:vals[i]}));
+}
+// marching squaresが返す独立セグメント群を、端点一致（1cm丸め）で連結してポリライン化する
+function joinSegments(segs){
+  const key=(p)=>Math.round(p.e*100)+','+Math.round(p.n*100);
+  const pointSegs=new Map();
+  segs.forEach((s,i)=>{
+    [0,1].forEach(k=>{
+      const kk=key(s[k]);
+      if(!pointSegs.has(kk)) pointSegs.set(kk,[]);
+      pointSegs.get(kk).push(i);
+    });
+  });
+  const used=new Array(segs.length).fill(false);
+  const paths=[];
+  for(let i=0;i<segs.length;i++){
+    if(used[i]) continue;
+    used[i]=true;
+    const path=[segs[i][0], segs[i][1]];
+    let curKey=key(segs[i][1]);
+    let guard=0;
+    while(guard++<20000){
+      const cand=(pointSegs.get(curKey)||[]).find(j=>!used[j]);
+      if(cand==null) break;
+      used[cand]=true;
+      const s2=segs[cand];
+      const k0=key(s2[0]);
+      const next = (k0===curKey) ? s2[1] : s2[0];
+      path.push(next);
+      curKey=key(next);
+    }
+    paths.push(path);
+  }
+  return paths;
+}
 function drawFlatContours(){
   if(!FLAT_GRID) return;
   const {g,cols,rows,en0,cells,cLat,cLon}=FLAT_GRID;
@@ -1152,23 +1243,25 @@ function drawFlatContours(){
   const levels=[];
   for(let lvl=Math.ceil(lo/step)*step; lvl<=hi+1e-9; lvl+=step) levels.push(+lvl.toFixed(6));
   if(lo<=0 && hi>=0 && !levels.some(v=>Math.abs(v)<1e-9)) levels.push(0);
+  const smoothCells=smoothDhGrid(cells, rows, cols, 1);
   levels.forEach(lvl=>{
-    const segs=marchingSquaresLevel(cells, rows, cols, g, en0.e, en0.n, lvl);
+    const segs=marchingSquaresLevel(smoothCells, rows, cols, g, en0.e, en0.n, lvl);
     if(!segs.length) return;
     const isZero=Math.abs(lvl)<1e-9;
     const isMeter=Math.abs(Math.round(lvl)-lvl)<1e-6;   // 1mごとのレベル線
     const color=isZero?'#3fa7ff':'#8fa3b8';
     const weight=isZero?3:1;
-    segs.forEach(seg=>{
-      const a=toLL(seg[0].e,seg[0].n), b=toLL(seg[1].e,seg[1].n);
-      const pl=L.polyline([[a.lat,a.lon],[b.lat,b.lon]],{color,weight,opacity:.85,interactive:isMeter}).addTo(flatLayer);
+    const paths=joinSegments(segs);
+    paths.forEach(path=>{
+      const latlngs=path.map(p=>{const ll=toLL(p.e,p.n); return [ll.lat,ll.lon];});
+      const pl=L.polyline(latlngs,{color,weight,opacity:.85,interactive:isMeter}).addTo(flatLayer);
       if(isMeter) pl.bindTooltip(`${lvl>0?'+':''}${lvl.toFixed(0)}m`,{sticky:true});
     });
   });
 }
 function computeFlatAreas(){
   const el=document.getElementById('flatResult');
-  if(!FLAT_GRID || !el) return;
+  if(!FLAT_GRID || !el) return null;
   const {g,cells}=FLAT_GRID;
   const flatCm=parseFloat(document.getElementById('fFlatCm').value)||20;
   const gradeCm=parseFloat(document.getElementById('fGradeCm').value)||50;
@@ -1191,8 +1284,121 @@ function computeFlatAreas(){
     `■ そのまま平ら（±${flatCm}cm以内）：<b>約${f(aFlat)}㎡</b>（${t(aFlat)}坪）<br>`+
     `■ 造成対応・盛土切土（±${gradeCm}cm以内）：約${f(aGrade)}㎡（${t(aGrade)}坪）<br>`+
     `■ 傾斜あり（±${gradeCm}cm超）：約${f(aSteep)}㎡（${t(aSteep)}坪）<br>`+
+    `<span style="color:#fff">□</span>白枠=そのまま平ら／<span style="color:#ff9d1a">- -</span>橙破線=造成対応（地図上の領域アウトライン）<br>`+
     `<span class="src">国土地理院DEM(5m)による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
+  return {flatCm,gradeCm,flatM,gradeM,aTotal,aFlat,aGrade,aSteep};
 }
+
+/* ====== 平坦度エリアの枠付き描画（連結成分ごとに外周をトレース） ====== */
+// グリッド(rows×cols)の bool マスクを4連結で連結成分に分け、各セルの成分ID・成分サイズを返す
+function gridComponents(mask, rows, cols){
+  const comp=new Array(rows*cols).fill(-1);
+  const sizes=[];
+  let nc=0;
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+    const idx=r*cols+c;
+    if(!mask[idx] || comp[idx]>=0) continue;
+    let size=0; const stack=[idx]; comp[idx]=nc;
+    while(stack.length){
+      const cur=stack.pop(); size++;
+      const cr=(cur/cols)|0, cc=cur%cols;
+      const nbrs=[[cr-1,cc],[cr+1,cc],[cr,cc-1],[cr,cc+1]];
+      for(const [nr,ncc] of nbrs){
+        if(nr<0||nr>=rows||ncc<0||ncc>=cols) continue;
+        const nidx=nr*cols+ncc;
+        if(mask[nidx] && comp[nidx]<0){ comp[nidx]=nc; stack.push(nidx); }
+      }
+    }
+    sizes.push(size); nc++;
+  }
+  return {comp, sizes};
+}
+// マスク(inMask(r,c)->bool)の外周を「属さない辺」の辺追跡で閉ループ化して返す。戻り値: [[ [e,n], ... ], ...]（各要素が1つの閉ループ）
+function traceMaskOutline(inMask, rows, cols, g, e0, n0){
+  const half=g/2;
+  const key=(p)=>Math.round(p[0]*1000)+','+Math.round(p[1]*1000);
+  const edges=[];
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      if(!inMask(r,c)) continue;
+      const e=e0+c*g, n=n0+r*g;
+      const NW=[e-half,n-half], NE=[e+half,n-half], SE=[e+half,n+half], SW=[e-half,n+half];
+      if(!inMask(r-1,c)) edges.push([NW,NE]);   // 上辺（隣接セルが集合外）
+      if(!inMask(r+1,c)) edges.push([SW,SE]);   // 下辺
+      if(!inMask(r,c-1)) edges.push([SW,NW]);   // 左辺
+      if(!inMask(r,c+1)) edges.push([NE,SE]);   // 右辺
+    }
+  }
+  if(!edges.length) return [];
+  const pointEdges=new Map();
+  edges.forEach((ed,i)=>{
+    [0,1].forEach(k=>{
+      const kk=key(ed[k]);
+      if(!pointEdges.has(kk)) pointEdges.set(kk,[]);
+      pointEdges.get(kk).push(i);
+    });
+  });
+  const used=new Array(edges.length).fill(false);
+  const loops=[];
+  for(let i=0;i<edges.length;i++){
+    if(used[i]) continue;
+    used[i]=true;
+    const path=[edges[i][0],edges[i][1]];
+    const startKey=key(edges[i][0]);
+    let curKey=key(edges[i][1]);
+    let guard=0;
+    while(guard++<50000 && curKey!==startKey){
+      const cand=(pointEdges.get(curKey)||[]).find(j=>!used[j]);
+      if(cand==null) break;
+      used[cand]=true;
+      const ed=edges[cand];
+      const k0=key(ed[0]);
+      const next = (k0===curKey) ? ed[1] : ed[0];
+      path.push(next);
+      curKey=key(next);
+    }
+    if(path.length>=3) loops.push(path);
+  }
+  return loops;
+}
+// 平ら／造成対応エリアの領域アウトラインを描画（drawFlatの後段。面積は computeFlatAreas の値を使い回す＝一致保証）
+function drawFlatOutlines(areas){
+  if(!FLAT_GRID || !areas) return;
+  const {g,cols,rows,en0,cells,cLat,cLon}=FLAT_GRID;
+  const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+  const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
+  const {flatCm,gradeCm,flatM,gradeM,aFlat,aGrade}=areas;
+  const tsubo=x=>x/3.305785, f=x=>x.toFixed(0), t=x=>tsubo(x).toFixed(1);
+  const inSiteArr=cells.map(c=>pointInSite(c.lat,c.lon));
+  const MIN_ISLAND=2;   // 1〜2セルの飛び地は枠線を描かない（面積計算には影響させない）
+
+  const drawGroup=(maskRaw, opts)=>{
+    const {comp,sizes}=gridComponents(maskRaw, rows, cols);
+    const mask=maskRaw.map((v,i)=> v && sizes[comp[i]]>MIN_ISLAND);
+    const inMask=(r,c)=>{ if(r<0||r>=rows||c<0||c>=cols) return false; return mask[r*cols+c]; };
+    const loops=traceMaskOutline(inMask, rows, cols, g, en0.e, en0.n);
+    loops.forEach(path=>{
+      const latlngs=path.map(p=>{const ll=toLL(p[0],p[1]); return [ll.lat,ll.lon];});
+      const pl=L.polygon(latlngs, opts.style).addTo(flatLayer);
+      pl.bindTooltip(opts.tooltip, {sticky:true});
+    });
+    return loops.length;
+  };
+
+  // 造成対応（平らエリアを含む外側輪郭）：橙の破線枠、塗りなし。先に描いて内側に白枠を重ねる
+  const gradeMask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && Math.abs(c.dh)<=gradeM);
+  drawGroup(gradeMask, {
+    style:{color:'#ff9d1a', weight:2, dashArray:'7,5', fill:false, interactive:true},
+    tooltip:`造成対応（±${gradeCm}cm）約${f(aGrade)}㎡（${t(aGrade)}坪）`
+  });
+  // そのまま平ら：太い白枠＋内側に緑系の淡い塗り
+  const flatMask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && Math.abs(c.dh)<=flatM);
+  drawGroup(flatMask, {
+    style:{color:'#ffffff', weight:3, fill:true, fillColor:'#3ecf7e', fillOpacity:0.18, interactive:true},
+    tooltip:`そのまま平ら（±${flatCm}cm）約${f(aFlat)}㎡（${t(aFlat)}坪）`
+  });
+}
+
 function clearFlat(){
   flatLayer.clearLayers();
   FLAT_GRID=null;
@@ -1636,18 +1842,33 @@ function drawPicks(){
     // ② 2H：赤い水平距離線（xb〜x2, 高さyb）の真上に同じ太さ・強調の赤太字で
     const xMid2=(xb+x2)/2;
     lab(xMid2, yb-10, '2H = '+twoH.toFixed(1)+' m', '#ff5d7a', '23', 'middle');
+    // 選択2点を直接結ぶ細い直線＋角度ラベル（H・2Hの直交表示とは別に、実測の2点間勾配を可視化）
+    const dxAB=Math.abs(a.dist-b.dist);
+    const angAB=dxAB>0?deg(Math.atan2(H,dxAB)):90;
+    add('line',{x1:SCAL.X(a.dist),y1:SCAL.Y(a.elev),x2:SCAL.X(b.dist),y2:SCAL.Y(b.elev),stroke:'#7ee0a3','stroke-width':1.5,'stroke-dasharray':'3,3'});
+    lab(xMid, yMidH-18, `選択2点間 勾配 ${angAB.toFixed(1)}°`, '#7ee0a3', '13', 'middle');
   }
 }
 
+// 測線全体（SAMPLES先頭→末尾）の平均勾配。SAMPLES<2なら省略。
+function overallSlopeLine(){
+  if(SAMPLES.length<2) return '';
+  const s0=SAMPLES[0], s1=SAMPLES[SAMPLES.length-1];
+  const dx=Math.abs(s1.dist-s0.dist), dz=Math.abs(s1.elev-s0.elev);
+  const ang=dx>0?deg(Math.atan2(dz,dx)):90;
+  return `全体勾配（始点→終点）: ${ang.toFixed(1)}°`;
+}
 function updateReadout(){
   const el=document.getElementById('secReadout');
-  if(picks.length===0){el.innerHTML=(SAMPLES.length>2?'30度超・2m超のがけを自動抽出できませんでした。グラフをクリックで手動指定できます。':'「断面図を作成」で崖下端・上端・Hを自動判定します。');return;}
-  if(picks.length===1){const a=picks[0];el.innerHTML=`1点目 標高 ${a.elev.toFixed(1)}m（距離 ${a.dist.toFixed(1)}m）／ もう1点クリックしてください`;return;}
+  const overall=overallSlopeLine();
+  const overallHtml = overall ? `<div style="color:var(--muted);font-size:11.5px;margin-top:2px">${overall}</div>` : '';
+  if(picks.length===0){el.innerHTML=(SAMPLES.length>2?'30度超・2m超のがけを自動抽出できませんでした。グラフをクリックで手動指定できます。':'「断面図を作成」で崖下端・上端・Hを自動判定します。')+overallHtml;return;}
+  if(picks.length===1){const a=picks[0];el.innerHTML=`1点目 標高 ${a.elev.toFixed(1)}m（距離 ${a.dist.toFixed(1)}m）／ もう1点クリックしてください`+overallHtml;return;}
   const c=getCliff();
   const dx=Math.abs(picks[0].dist-picks[1].dist);
   const ang=dx>0?deg(Math.atan2(c.H,dx)):90;
   const modeTxt = cliffMode==='auto' ? '自動判定' : '手動補正';
-  el.innerHTML=`[${modeTxt}] <span class="pa">崖上端</span> ${c.top.elev.toFixed(1)}m ／ <span class="pb">崖下端</span> ${c.bottom.elev.toFixed(1)}m ／ 崖高 <span class="delta">${c.H.toFixed(1)} m</span> ／ 勾配 ${ang.toFixed(1)}° → 白破線=30°基準線。地図に2H影響ラインを反映（「確定」で重ねられます）`;
+  el.innerHTML=`[${modeTxt}] <span class="pa">崖上端</span> ${c.top.elev.toFixed(1)}m ／ <span class="pb">崖下端</span> ${c.bottom.elev.toFixed(1)}m ／ 崖高 <span class="delta">${c.H.toFixed(1)} m</span> ／ <b>選択2点間 勾配 ${ang.toFixed(1)}°</b> → 白破線=30°基準線。地図に2H影響ラインを反映（「確定」で重ねられます）`+overallHtml;
 }
 
 function clearPick(){picks=[];drawPicks();updateReadout();drawCliff();recompute();}
