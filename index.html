@@ -254,6 +254,7 @@
     <div class="card tool-flat edit-only">
       <h2>平坦度判定（道路レベル基準）</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。</div>
+      <button id="subAreaToggleBtn" class="small" style="width:100%;margin-top:6px;display:none" onclick="toggleSubAreaVariant()"></button>
       <div class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
         <label>平ら ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
         <label>軽造成 ±cm<input id="fGradeCm" type="text" inputmode="decimal" value="50"></label>
@@ -683,13 +684,21 @@ const SITES = {
             //   日本測地系→世界測地系(3パラメータ)変換で航空写真・現地と8m以内で一致（_input/Hirai1298/build_hirai.py）。
             //   （柏谷の地籍図は世界測地系。図面ごとに測地系が異なるので流用時は必ず現地照合すること）
             shape:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53],[-9.87,47.25],[-20.04,36.45],[-21.57,34.81],[-33.64,24.15]],
-            // 分割後のA/B/C区画。subAreas＝敷地の「内部分割」（refShapesは敷地の外の隣接筆で別物）。
-            // 平坦度タブの区画別集計はこの subAreas だけを見る（外の筆を集計しないため分けている）。
-            subAreas:[
-              {no:'A区画 999.9㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.11,-15.38]]},
-              {no:'B区画 1000.0㎡', pts:[[-20.04,36.45],[-21.57,34.81],[-33.64,24.15],[-33.69,23.47],[6.11,-15.38],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[14.34,2.88]]},
-              {no:'C区画 876.6㎡', pts:[[-9.87,47.25],[-20.04,36.45],[14.34,2.88],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53]]}
-            ], twoSided:false }
+            // 分割後の区画。subAreaSets＝敷地の「内部分割」の複数案（refShapesは敷地の外の隣接筆で別物）。
+            // 平坦度タブの区画別集計はこの subAreaSets の選択中の案だけを見る（外の筆を集計しない）。
+            // ABC=分割計画図④の3区画案（正本）。DE=A/B境界(-44.31°)・B/C境界(135.81°、同一直線)と
+            // 平行な1本の線で全体を面積二等分(1438.52㎡ずつ)した代替2区画案（_input/Hirai1298/build_split2.py）。
+            subAreaSets:{
+              'ABC':[
+                {no:'A区画 999.9㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.11,-15.38]]},
+                {no:'B区画 1000.0㎡', pts:[[-20.04,36.45],[-21.57,34.81],[-33.64,24.15],[-33.69,23.47],[6.11,-15.38],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[14.34,2.88]]},
+                {no:'C区画 876.6㎡', pts:[[-9.87,47.25],[-20.04,36.45],[14.34,2.88],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53]]}
+              ],
+              'DE':[
+                {no:'D区画 1438.5㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.15,-8.1],[-28,29.13],[-33.64,24.15]]},
+                {no:'E区画 1438.5㎡', pts:[[10.15,-8.1],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53],[-9.87,47.25],[-20.04,36.45],[-21.57,34.81],[-28,29.13]]}
+              ]
+            }, subAreaDefault:'ABC', twoSided:false }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
@@ -734,17 +743,43 @@ function buildSite(){
   SITE_XFORM={cx,cy,s,cr,sr,lat0,lon0,mLat,mLon};
   return shapeToLatLngs(sh, SITE_XFORM);
 }
-// 敷地の内部分割（subAreas）を latlng で返す。平坦度の区画別集計と地図描画で共有する。
-function subAreaPolys(){
-  if(!SITE.subAreas || !SITE_XFORM) return [];
-  return SITE.subAreas.map(s=>({no:s.no, latlngs:shapeToLatLngs(s.pts, SITE_XFORM)}));
+// 敷地の内部分割（区画割案）。物件によっては複数案(subAreaSets)を切替できる（例：平井のABC案/DE案）。
+let subAreaVariant=null;   // 選択中の案キー。switchSite()でSITE.subAreaDefaultに戻す
+function currentSubAreas(){
+  if(SITE.subAreaSets) return SITE.subAreaSets[subAreaVariant] || SITE.subAreaSets[Object.keys(SITE.subAreaSets)[0]];
+  return SITE.subAreas || null;   // 単一案のみの物件（将来の拡張用）
 }
-// 調整用の参照地番（周辺筆refShapes＝敷地の外）＋内部分割（subAreas＝敷地の中）。
+function hasSubAreaVariants(){ return !!(SITE.subAreaSets && Object.keys(SITE.subAreaSets).length>1); }
+// 敷地の内部分割（現在選択中の案）を latlng で返す。平坦度の区画別集計と地図描画で共有する。
+function subAreaPolys(){
+  const areas=currentSubAreas();
+  if(!areas || !SITE_XFORM) return [];
+  return areas.map(s=>({no:s.no, latlngs:shapeToLatLngs(s.pts, SITE_XFORM)}));
+}
+// 区画割案の切替ボタン（物件が複数案を持つ時だけ）。地図・平坦度の表示を選択中の案へ即座に差し替える。
+function toggleSubAreaVariant(){
+  if(!hasSubAreaVariants()) return;
+  const keys=Object.keys(SITE.subAreaSets);
+  subAreaVariant=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
+  updateSubAreaToggleUI();
+  drawSiteRefs();
+  if(FLAT_GRID) drawFlat();
+}
+function updateSubAreaToggleUI(){
+  const btn=document.getElementById('subAreaToggleBtn');
+  if(!btn) return;
+  if(!hasSubAreaVariants()){ btn.style.display='none'; return; }
+  btn.style.display='block';
+  const keys=Object.keys(SITE.subAreaSets);
+  const other=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
+  btn.textContent=`区画割案：${subAreaVariant}（クリックで${other}案に切替）`;
+}
+// 調整用の参照地番（周辺筆refShapes＝敷地の外）＋内部分割（現在選択中の区画割案＝敷地の中）。
 // siteAdjustMode中だけ、メイン敷地と同じSITE_XFORMで描画。
 function drawSiteRefs(){
   siteRefLayer.clearLayers();
   if(!siteAdjustMode || !SITE_XFORM) return;
-  [...(SITE.refShapes||[]), ...(SITE.subAreas||[])].forEach(ref=>{
+  [...(SITE.refShapes||[]), ...(currentSubAreas()||[])].forEach(ref=>{
     const latlngs=shapeToLatLngs(ref.pts, SITE_XFORM).map(p=>[p.lat,p.lon]);
     const color = ref.isRoad ? '#5ab0ff' : '#9fb0c0';
     L.polygon(latlngs,{color,weight:2,dashArray:'6,4',fill:true,fillOpacity:0.08,interactive:false}).addTo(siteRefLayer);
@@ -825,6 +860,8 @@ function switchSite(id){
   try{ localStorage.setItem('kouteisa_current_site',id); }catch(e){}
   SITE=SITES[id];
   siteAdj=loadSiteAdj();
+  subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
+  updateSubAreaToggleUI();
   clearBand();      // 帯・セル・結果をリセット
   clearFlat();      // 平坦度グリッド・結果をリセット
   flatRefLayer.clearLayers();
@@ -2187,8 +2224,10 @@ if(!VIEW){   // 共有（閲覧）リンクでは常にcliff固定。通常時�
   measureControl.addTo(map);   // 距離計測ツールは編集モードのみ（共有/閲覧では出さない）
 }
 populateSiteSel();
+subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
 if(!_shared){ map.setView([siteAdj.lat,siteAdj.lon], map.getZoom()); }
 drawSite();
+updateSubAreaToggleUI();
 flatRef=loadFlatRef();
 drawFlatRef();
 setTool(TOOL);
