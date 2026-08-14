@@ -100,10 +100,10 @@
   /* ツール切替（がけ判定／平坦度）：平坦度カードは既定非表示、JSで表示を切替 */
   .tool-flat{display:none}
   /* 平坦度の結果表（全体・区画別で共通） */
-  .ftab{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0 8px}
-  .ftab caption{caption-side:top;text-align:left;font-weight:700;color:#e6edf3;padding:5px 0 3px}
-  .ftab th,.ftab td{border:1px solid #2c3e50;padding:3px 6px;text-align:right;white-space:nowrap}
-  .ftab th{background:#16222e;color:#9fb0c0;font-weight:600;text-align:center}
+  .ftab{width:100%;border-collapse:collapse;font-size:10.5px;margin:4px 0 8px}
+  .ftab caption{caption-side:top;text-align:left;font-weight:700;color:#e6edf3;padding:4px 0 2px;font-size:11.5px}
+  .ftab th,.ftab td{border:1px solid #2c3e50;padding:2px 4px;text-align:right;white-space:nowrap}
+  .ftab th{background:#16222e;color:#9fb0c0;font-weight:600;text-align:center;font-size:10px}
   .ftab td.l{text-align:left}
   .ftab td.c{text-align:center}
   .ftab td.cum,.ftab th:last-child{background:#132430;font-weight:700;color:#8fd6ff}
@@ -265,6 +265,7 @@
       </div>
       <div class="hint">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
       <div style="margin-top:4px"><button class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button></div>
+      <div style="margin-top:6px"><button class="small" style="width:100%" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button></div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
         <button class="small" onclick="clearFlat()">クリア</button>
         <span id="flatProg" class="muted" style="font-size:11px"></span>
@@ -1198,6 +1199,40 @@ function recomputeFlatOnly(){
   const okCnt=FLAT_GRID.cells.filter(c=>c.elev!=null).length;
   if(prog) prog.textContent=`基準点変更→再計算済み：${okCnt}/${FLAT_GRID.cells.length} 点（取得済みデータを再利用）`;
 }
+// 「平ら＋軽い造成で可（=|標高−基準|≦gradeM）」の面積が最大になる基準標高を、
+// 取得済みグリッド(FLAT_GRID)だけを使って探す（API呼び出しなし・区画A/B/C等の個別事情は考慮しない全体最適）。
+// 原理：各セルの標高eは基準Xが[e-gradeM, e+gradeM]の範囲にある間だけ「使える」に入る。
+// 区間の重なりが最大になるX（区間スタビング）をスイープラインで求める＝O(n log n)。
+function optimizeFlatRef(){
+  if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  const {gradeM}=flatThresholds();
+  const cellArea=FLAT_GRID.g*FLAT_GRID.g;
+  const siteCells=FLAT_GRID.cells.filter(c=>c.elev!=null && pointInSite(c.lat,c.lon));
+  if(!siteCells.length){ alert('敷地内に有効な標高データがありません。'); return; }
+  const EPS=1e-6;
+  const events=[];
+  siteCells.forEach(c=>{ events.push([c.elev-gradeM,+cellArea]); events.push([c.elev+gradeM+EPS,-cellArea]); });
+  events.sort((a,b)=>a[0]-b[0]);
+  let cur=0, best=-1, bestLo=null, bestHi=null;
+  for(let i=0;i<events.length;i++){
+    cur+=events[i][1];
+    if(cur>best+1e-9){
+      best=cur; bestLo=events[i][0];
+      bestHi=(i+1<events.length)?events[i+1][0]:bestLo;   // このピークが続く区間の右端（次のイベントまで）
+    }
+  }
+  const targetElev=(bestLo+Math.min(bestHi,bestLo+2))/2;   // プラトーの中央付近（境界ぴったりを避け丸め誤差に強くする）
+  // 実在する標高点の中から、その目標標高に一番近い点を選ぶ（敷地外の余白＝道路想定エリアも候補に含む）
+  let bestCell=null, bestDiff=Infinity;
+  FLAT_GRID.cells.forEach(c=>{ if(c.elev==null) return; const d=Math.abs(c.elev-targetElev); if(d<bestDiff){bestDiff=d; bestCell=c;} });
+  if(!bestCell){ alert('候補点が見つかりませんでした。'); return; }
+  flatRef={lat:bestCell.lat, lon:bestCell.lon, elev:bestCell.elev, hsrc: flatRef?flatRef.hsrc:null};
+  drawFlatRef(); saveFlatRef();
+  recomputeFlatOnly();
+  const prog=document.getElementById('flatProg');
+  const tsubo=x=>(x/3.305785).toFixed(1);
+  if(prog) prog.textContent=`自動選択：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(平ら+軽造成) 約${best.toFixed(0)}㎡（${tsubo(best)}坪）が最大`;
+}
 
 async function generateFlat(){
   if(!flatRef){ alert('先に基準点（道路）を地図でクリックしてください。'); return; }
@@ -1439,17 +1474,17 @@ function tallyFlat(inTest){
 function flatTableHTML(title, r, th){
   const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
   const pct=x=> r.total>0 ? (x/r.total*100).toFixed(1)+'%' : '—';
-  let cum=0;   // 「平ら」から順に積み上げた累積％＝「ここまでの合計で使える割合」
+  let cum=0, cumTsubo=0;   // 「平ら」から順に積み上げた累計＝「ここまでの合計で使える分」
   let rows=FLAT_CATS.map(c=>{
-    cum+=r[c.key];
+    cum+=r[c.key]; cumTsubo+=r[c.key];
     return `<tr><td class="c" style="color:${FLAT_COLORS[c.key]}">■</td>`+
     `<td class="l">${c.label}</td><td>${flatRangeText(c.key,th)}</td>`+
-    `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td><td class="cum">${pct(cum)}</td></tr>`;
+    `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td><td class="cum">${pct(cum)}</td><td class="cum">${tsuboOf(cumTsubo).toFixed(1)}</td></tr>`;
   }).join('');
-  if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td><td class="cum">—</td></tr>`;
+  if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td><td class="cum">—</td><td class="cum">—</td></tr>`;
   return `<table class="ftab"><caption>${title}　約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
-    `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th><th>累計％</th></tr>${rows}`+
-    `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td><td class="cum">100%</td></tr></table>`;
+    `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th><th>累計％</th><th>累計坪</th></tr>${rows}`+
+    `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td><td class="cum">100%</td><td class="cum">${t(r.total)}</td></tr></table>`;
 }
 function computeFlatAreas(){
   const el=document.getElementById('flatResult');
