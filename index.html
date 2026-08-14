@@ -253,7 +253,7 @@
 
     <div class="card tool-flat edit-only">
       <h2>平坦度判定（道路レベル基準）</h2>
-      <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。</div>
+      <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
       <button id="subAreaToggleBtn" class="small" style="width:100%;margin-top:6px;display:none" onclick="toggleSubAreaVariant()"></button>
       <div class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
         <label>平ら ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
@@ -413,7 +413,8 @@ function flatLegendHTML(){
     `<span style="color:${FLAT_COLORS.flat}">■</span>±${flatCm}cm 平ら<br>`+
     `<span style="color:${FLAT_COLORS.grade}">■</span>±${gradeCm}cm 軽い造成で可<br>`+
     `<span style="color:${FLAT_COLORS.steep}">■</span>±${steepCm}cm 要造成<br>`+
-    `<span style="color:${FLAT_COLORS.over}">■</span>それ以上 傾斜地`;
+    `<span style="color:${FLAT_COLORS.over}">■</span>それ以上 傾斜地<br>`+
+    `<span style="color:#ff2d2d">―</span>赤太線＝基準ライン（基準点と同じ標高）`;
 }
 function updateFlatLegend(){ if(flatLegendDiv) flatLegendDiv.innerHTML=flatLegendHTML(); }
 
@@ -1483,15 +1484,16 @@ function drawFlatContours(){
   levels.forEach(lvl=>{
     const segs=marchingSquaresLevel(smoothCells, rows, cols, g, en0.e, en0.n, lvl);
     if(!segs.length) return;
-    const isZero=Math.abs(lvl)<1e-9;
+    const isZero=Math.abs(lvl)<1e-9;   // dh=0＝基準点と同じ標高を結んだ等高線＝「基準ライン」
     const isMeter=Math.abs(Math.round(lvl)-lvl)<1e-6;   // 1mごとのレベル線
-    const color=isZero?'#3fa7ff':'#8fa3b8';
-    const weight=isZero?3:1;
+    const color=isZero?'#ff2d2d':'#8fa3b8';
+    const weight=isZero?4:1;
     const paths=joinSegments(segs);
     paths.forEach(path=>{
       const latlngs=path.map(p=>{const ll=toLL(p.e,p.n); return [ll.lat,ll.lon];});
-      const pl=L.polyline(latlngs,{color,weight,opacity:.85,interactive:isMeter}).addTo(flatLayer);
-      if(isMeter) pl.bindTooltip(`${lvl>0?'+':''}${lvl.toFixed(0)}m`,{sticky:true});
+      const pl=L.polyline(latlngs,{color,weight,opacity:isZero?0.95:0.85,interactive:(isMeter||isZero)}).addTo(flatLayer);
+      if(isZero) pl.bindTooltip(`基準ライン（標高${flatRef&&flatRef.elev!=null?flatRef.elev.toFixed(1):'—'}m と同じ高さの等高線）`,{sticky:true});
+      else if(isMeter) pl.bindTooltip(`${lvl>0?'+':''}${lvl.toFixed(0)}m`,{sticky:true});
     });
   });
 }
