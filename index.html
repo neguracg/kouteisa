@@ -1138,7 +1138,12 @@ function buildSharedBand(){
 
 /* ====== 平坦度判定（前面道路レベル=0基準） ====== */
 let flatRef=null;     // {lat,lon,elev}
-let FLAT_GRID=null;   // {g,cols,rows,en0:{e,n},cLat,cLon,cells:[{e,n,lat,lon,elev,dh}]}
+let FLAT_GRID=null;   // {g,cols,rows,en0:{e,n},cLat,cLon,cells:[{e,n,lat,lon,elev,dh}]}（標高は取得済みキャッシュ）
+let FLAT_GRID_SIG=null;   // FLAT_GRID取得時の[物件,配置,格子間隔]の指紋。変わっていなければ再取得は不要
+function flatGridSig(){
+  const g=Math.max(0.5, parseFloat(document.getElementById('fGrid').value)||1);
+  return JSON.stringify([CURRENT_SITE, siteAdj.lat, siteAdj.lon, siteAdj.rot, siteAdj.scale, g]);
+}
 
 function flatRefKey(){ return 'kouteisa_flatref_'+CURRENT_SITE; }
 function saveFlatRef(){
@@ -1154,8 +1159,11 @@ function loadFlatRef(){
   }catch(e){}
   return null;
 }
-async function setFlatRef(latlng){
-  flatRef={lat:+latlng.lat.toFixed(7), lon:+latlng.lng.toFixed(7), elev:null, hsrc:null};
+// 基準点の位置を確定（新規クリック／ドラッグ移動どちらも共通）。
+// 標高グリッドが既に取得済みなら、その基準点の標高だけ取り直して即座に再計算・再描画する
+// （格子の再取得はしない＝クリックのたびにパッパッと基準点を切り替えられる）。
+async function moveFlatRef(lat, lon){
+  flatRef={lat:+lat.toFixed(7), lon:+lon.toFixed(7), elev:null, hsrc:flatRef?flatRef.hsrc:null};
   drawFlatRef();
   const prog=document.getElementById('flatProg');
   if(prog) prog.textContent='基準点の標高を取得中…';
@@ -1166,26 +1174,37 @@ async function setFlatRef(latlng){
     const j=await r.json();
     flatRef.hsrc=j.hsrc||null;
   }catch(e){}
-  if(prog) prog.textContent = (v==null) ? '基準点の標高取得に失敗しました。「APIを開く」等で再クリックしてください。' : '';
   drawFlatRef();
   saveFlatRef();
+  if(v==null){ if(prog) prog.textContent='基準点の標高取得に失敗しました。再クリックしてください。'; return; }
+  if(FLAT_GRID){ recomputeFlatOnly(); }        // 格子は取得済み→再計算のみ（速い）
+  else if(prog){ prog.textContent=''; }        // 格子未取得→「平坦度を計算」待ち
 }
+function setFlatRef(latlng){ return moveFlatRef(latlng.lat, latlng.lng); }
 function drawFlatRef(){
   flatRefLayer.clearLayers();
   if(!flatRef) return;
-  makeDot(flatRefLayer,[flatRef.lat,flatRef.lon],'#ffd166',true, ll=>{
-    flatRef.lat=+ll.lat.toFixed(7); flatRef.lon=+ll.lng.toFixed(7);
-    drawFlatRef();      // dragendでは再取得・再計算はしない（位置だけ更新）
-    saveFlatRef();
-  });
+  makeDot(flatRefLayer,[flatRef.lat,flatRef.lon],'#ffd166',true, ll=> moveFlatRef(ll.lat, ll.lng));
   const txt='基準（道路）標高 '+(flatRef.elev!=null ? flatRef.elev.toFixed(1)+'m' : '取得中…');
   makeLabel(flatRefLayer, L.latLng(flatRef.lat,flatRef.lon), txt, '#ffd166', true);
+}
+// 取得済みの標高キャッシュ(FLAT_GRID.cells)のまま、基準点だけ変えてdhを再計算・再描画（API再取得なし）
+function recomputeFlatOnly(){
+  if(!FLAT_GRID || !flatRef || flatRef.elev==null) return;
+  FLAT_GRID.cells.forEach(c=>{ c.dh=(c.elev!=null)?(c.elev-flatRef.elev):null; });
+  drawFlat();
+  const prog=document.getElementById('flatProg');
+  const okCnt=FLAT_GRID.cells.filter(c=>c.elev!=null).length;
+  if(prog) prog.textContent=`基準点変更→再計算済み：${okCnt}/${FLAT_GRID.cells.length} 点（取得済みデータを再利用）`;
 }
 
 async function generateFlat(){
   if(!flatRef){ alert('先に基準点（道路）を地図でクリックしてください。'); return; }
   if(flatRef.elev==null){ alert('基準点の標高が未取得です。基準点をクリックし直してください。'); return; }
   if(siteLatLngs.length<3){ alert('先に敷地を配置してください。'); return; }
+  // 物件・敷地配置・格子間隔が前回取得時から変わっていなければ、標高は取得済み＝再計算のみで済む
+  const sig=flatGridSig();
+  if(FLAT_GRID && FLAT_GRID_SIG===sig){ recomputeFlatOnly(); return; }
   const gInput=Math.max(0.5, parseFloat(document.getElementById('fGrid').value)||1);
   let g=gInput;
   const cLat=siteLatLngs.reduce((s,p)=>s+p.lat,0)/siteLatLngs.length;
@@ -1229,6 +1248,7 @@ async function generateFlat(){
   } finally { hideLoading(); }
   grid.forEach(c=>{ c.dh=(c.elev!=null)?(c.elev-flatRef.elev):null; });
   FLAT_GRID={g,cols,rows,en0:{e:eMin,n:nMin},cLat,cLon,cells:grid};
+  FLAT_GRID_SIG=sig;
   const okCnt=grid.filter(c=>c.elev!=null).length;
   if(prog) prog.textContent=`${adjustedMsg}完了：${okCnt}/${total} 点`;
   drawFlat();
@@ -1565,6 +1585,7 @@ function drawFlatOutlines(areas){
 function clearFlat(){
   flatLayer.clearLayers();
   FLAT_GRID=null;
+  FLAT_GRID_SIG=null;
   const el=document.getElementById('flatResult'); if(el){el.style.display='none';el.innerHTML='';}
   const prog=document.getElementById('flatProg'); if(prog) prog.textContent='';
 }
