@@ -160,6 +160,7 @@
         <span class="muted edit-only">｜ 崖下端・上端は<b>自動判定</b>（クリックで手動補正可）</span>
         <button class="small edit-only" onclick="runAuto()">自動判定に戻す</button>
         <button class="small edit-only" onclick="clearPick()">選択クリア</button>
+        <button class="small" id="chartFullBtn" onclick="toggleChartFullView()">全区間を表示</button>
         <button class="small primary edit-only" onclick="confirmCliff()">この崖線を地図に確定（追加）</button>
         <span id="confCount" class="muted edit-only">確定 0 本</span>
         <button class="small edit-only" onclick="clearConfirmed()">確定線を消去</button>
@@ -1113,6 +1114,7 @@ function addSel(p,txt,color){
 async function showStripSection(i){
   const st=BAND_STRIPS[i]; if(!st) return;
   curStrip=i;
+  chartFullView=false;   // 新しい断面では毎回、崖に自動フォーカスした窓から見せる
   if(!st.samples){   // 共有モード等：その断面だけ標高を取得
     showLoading('断面を取得中…');
     const step=Math.max(0.5,parseFloat(document.getElementById('pStep').value)||0.5);
@@ -1942,6 +1944,7 @@ function confidence(c,ang,sens){
 }
 
 async function generateSection(){
+  chartFullView=false;   // 新しい断面では毎回、崖に自動フォーカスした窓から見せる
   const t=POINTS.top,b=POINTS.bottom;
   const step=Math.max(0.1,parseFloat(document.getElementById('pStep').value)||0.5);
   const total=haversine(t,b);
@@ -1968,6 +1971,16 @@ async function generateSection(){
   runAuto();   // 30度基準線で崖下端・上端・Hを自動判定
 }
 
+// 「全区間を表示」トグル：崖周辺に自動フォーカスした窓 ⇔ 測線の全長。
+// 自動窓は崖下端から2H・敷地までは確実に含むが、そこで終わりとは限らない
+// （その先で谷になって登り返す等）ので、実測の全区間を見比べたい時に使う。
+let chartFullView=false;
+function toggleChartFullView(){ chartFullView=!chartFullView; drawChart(); }
+function updateChartFullBtn(hasMoreBeyond){
+  const btn=document.getElementById('chartFullBtn'); if(!btn) return;
+  btn.textContent = chartFullView ? '自動フォーカスに戻す' : '全区間を表示';
+  btn.classList.toggle('primary', hasMoreBeyond && !chartFullView);   // 窓の外にまだ続きがある時だけ強調
+}
 function drawChart(){
   const svg=document.getElementById('chart');
   while(svg.firstChild) svg.removeChild(svg.lastChild);
@@ -1976,10 +1989,12 @@ function drawChart(){
   const W=Math.max(320,Math.round(rect.width))||1000, H=Math.max(180,Math.round(rect.height))||300;
   svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
   const ml=58,mr=18,mt=14,mb=30;
-  // 表示ウィンドウ：崖（下端・上端）周辺に絞る（遠い平地は描かない）
+  // 表示ウィンドウ：崖（下端・上端）周辺に絞る（遠い平地は描かない）。「全区間を表示」中は測線の全長。
   const dAll=SAMPLES.map(p=>p.dist); let xLo=Math.min(...dAll), xHi=Math.max(...dAll);
-  const win=chartWindow();
+  const fullLo=xLo, fullHi=xHi, fullEndElev=SAMPLES[SAMPLES.length-1].elev;
+  const win=chartFullView?null:chartWindow();
   if(win){ xLo=win[0]; xHi=win[1]; }
+  updateChartFullBtn(win!=null && (win[0]>fullLo+1e-6 || win[1]<fullHi-1e-6));
   const span=(xHi-xLo)||1;
   const inWin=SAMPLES.filter(p=>p.dist>=xLo-1e-6 && p.dist<=xHi+1e-6);
   const view=inWin.length>=2?inWin:SAMPLES;
@@ -2003,12 +2018,22 @@ function drawChart(){
   add('path',{d:'M '+view.map(p=>`${X(p.dist)} ${Y(p.elev)}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':2});
   add('text',{x:(ml+W-mr)/2,y:H-3,'text-anchor':'middle'},'水平距離 (m)  左=崖上側 / 右=崖下側');
   add('text',{x:13,y:H/2,'text-anchor':'middle',transform:`rotate(-90 13 ${H/2})`},'標高 (m)');
-  // 断面図 始点／終点（表示窓の両端・地図のアイコンと同色）
+  // 断面図 始点／終点。表示窓が測線の全長より狭い時は「始点」「終点」と誤認させない
+  // （窓の端はそこで測線が終わっている訳ではない＝この先も地形が続く）。
   const s0=view[0], s1=view[view.length-1];
+  const atTrueStart=Math.abs(s0.dist-fullLo)<1e-6, atTrueEnd=Math.abs(s1.dist-fullHi)<1e-6;
   add('circle',{cx:X(s0.dist),cy:Y(s0.elev),r:5,fill:COL.start,stroke:'#fff','stroke-width':1.5});
-  add('text',{x:X(s0.dist)+8,y:Y(s0.elev)-8,fill:COL.start,'font-weight':'bold'},'始点');
+  if(atTrueStart){
+    add('text',{x:X(s0.dist)+8,y:Y(s0.elev)-8,fill:COL.start,'font-weight':'bold'},'始点');
+  }else{
+    add('text',{x:X(s0.dist)+8,y:Y(s0.elev)-8,fill:'#8fa3b8','font-size':'11'},`←この先 ${s0.dist.toFixed(0)}m 続く`);
+  }
   add('circle',{cx:X(s1.dist),cy:Y(s1.elev),r:5,fill:COL.end,stroke:'#fff','stroke-width':1.5});
-  add('text',{x:X(s1.dist)-8,y:Y(s1.elev)-8,'text-anchor':'end',fill:COL.end,'font-weight':'bold'},'終点');
+  if(atTrueEnd){
+    add('text',{x:X(s1.dist)-8,y:Y(s1.elev)-8,'text-anchor':'end',fill:COL.end,'font-weight':'bold'},'終点');
+  }else{
+    add('text',{x:X(s1.dist)-8,y:Y(s1.elev)-8,'text-anchor':'end',fill:'#8fa3b8','font-size':'11'},`終点(標高${fullEndElev.toFixed(1)}m)まで${(fullHi-s1.dist).toFixed(0)}m→`);
+  }
   drawPicks();
 }
 // 敷地重心を現在の断面線に射影したdist（崖下端から見た敷地の向き判定に使う）
