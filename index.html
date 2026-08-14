@@ -20,7 +20,7 @@
   .layout{display:flex;height:calc(100% - 47px);min-height:0}
   .mapcol{flex:1;min-width:0;display:flex;flex-direction:column}
   #map{flex:1;min-height:200px;background:#1a2530}
-  .side{width:440px;max-width:46vw;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:14px}
+  .side{width:520px;max-width:52vw;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:14px}
   @media(max-width:820px){
     .layout{flex-direction:column;height:auto}
     #map{height:46vh}
@@ -106,6 +106,7 @@
   .ftab th{background:#16222e;color:#9fb0c0;font-weight:600;text-align:center}
   .ftab td.l{text-align:left}
   .ftab td.c{text-align:center}
+  .ftab td.cum,.ftab th:last-child{background:#132430;font-weight:700;color:#8fd6ff}
   .ftab tr.tot td{background:#16222e;font-weight:700}
   body.viewmode #viewBanner{display:block;background:rgba(63,167,255,.15);border:1px solid var(--accent);color:#cfe0ef;font-size:12px;padding:9px 11px;border-radius:8px;line-height:1.6}
   .explain{font-size:12px;line-height:1.7;color:#cdd9e5}
@@ -1438,14 +1439,17 @@ function tallyFlat(inTest){
 function flatTableHTML(title, r, th){
   const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
   const pct=x=> r.total>0 ? (x/r.total*100).toFixed(1)+'%' : '—';
-  let rows=FLAT_CATS.map(c=>
-    `<tr><td class="c" style="color:${FLAT_COLORS[c.key]}">■</td>`+
+  let cum=0;   // 「平ら」から順に積み上げた累積％＝「ここまでの合計で使える割合」
+  let rows=FLAT_CATS.map(c=>{
+    cum+=r[c.key];
+    return `<tr><td class="c" style="color:${FLAT_COLORS[c.key]}">■</td>`+
     `<td class="l">${c.label}</td><td>${flatRangeText(c.key,th)}</td>`+
-    `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td></tr>`).join('');
-  if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td></tr>`;
+    `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td><td class="cum">${pct(cum)}</td></tr>`;
+  }).join('');
+  if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td><td class="cum">—</td></tr>`;
   return `<table class="ftab"><caption>${title}　約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
-    `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th></tr>${rows}`+
-    `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td></tr></table>`;
+    `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th><th>累計％</th></tr>${rows}`+
+    `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td><td class="cum">100%</td></tr></table>`;
 }
 function computeFlatAreas(){
   const el=document.getElementById('flatResult');
