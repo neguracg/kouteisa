@@ -99,6 +99,14 @@
   #viewBanner{display:none}
   /* ツール切替（がけ判定／平坦度）：平坦度カードは既定非表示、JSで表示を切替 */
   .tool-flat{display:none}
+  /* 平坦度の結果表（全体・区画別で共通） */
+  .ftab{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0 8px}
+  .ftab caption{caption-side:top;text-align:left;font-weight:700;color:#e6edf3;padding:5px 0 3px}
+  .ftab th,.ftab td{border:1px solid #2c3e50;padding:3px 6px;text-align:right;white-space:nowrap}
+  .ftab th{background:#16222e;color:#9fb0c0;font-weight:600;text-align:center}
+  .ftab td.l{text-align:left}
+  .ftab td.c{text-align:center}
+  .ftab tr.tot td{background:#16222e;font-weight:700}
   body.viewmode #viewBanner{display:block;background:rgba(63,167,255,.15);border:1px solid var(--accent);color:#cfe0ef;font-size:12px;padding:9px 11px;border-radius:8px;line-height:1.6}
   .explain{font-size:12px;line-height:1.7;color:#cdd9e5}
   .explain h3{font-size:12px;color:var(--accent);margin:10px 0 4px}
@@ -673,8 +681,9 @@ const SITES = {
             //   日本測地系→世界測地系(3パラメータ)変換で航空写真・現地と8m以内で一致（_input/Hirai1298/build_hirai.py）。
             //   （柏谷の地籍図は世界測地系。図面ごとに測地系が異なるので流用時は必ず現地照合すること）
             shape:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53],[-9.87,47.25],[-20.04,36.45],[-21.57,34.81],[-33.64,24.15]],
-            // 分割後のA/B/C区画。「敷地を調整」モード中だけ破線表示（分割線の位置確認用）
-            refShapes:[
+            // 分割後のA/B/C区画。subAreas＝敷地の「内部分割」（refShapesは敷地の外の隣接筆で別物）。
+            // 平坦度タブの区画別集計はこの subAreas だけを見る（外の筆を集計しないため分けている）。
+            subAreas:[
               {no:'A区画 999.9㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.11,-15.38]]},
               {no:'B区画 1000.0㎡', pts:[[-20.04,36.45],[-21.57,34.81],[-33.64,24.15],[-33.69,23.47],[6.11,-15.38],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[14.34,2.88]]},
               {no:'C区画 876.6㎡', pts:[[-9.87,47.25],[-20.04,36.45],[14.34,2.88],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53]]}
@@ -723,11 +732,17 @@ function buildSite(){
   SITE_XFORM={cx,cy,s,cr,sr,lat0,lon0,mLat,mLon};
   return shapeToLatLngs(sh, SITE_XFORM);
 }
-// 調整用の参照地番（周辺筆）。siteAdjustMode中だけ、メイン敷地と同じSITE_XFORMで描画。
+// 敷地の内部分割（subAreas）を latlng で返す。平坦度の区画別集計と地図描画で共有する。
+function subAreaPolys(){
+  if(!SITE.subAreas || !SITE_XFORM) return [];
+  return SITE.subAreas.map(s=>({no:s.no, latlngs:shapeToLatLngs(s.pts, SITE_XFORM)}));
+}
+// 調整用の参照地番（周辺筆refShapes＝敷地の外）＋内部分割（subAreas＝敷地の中）。
+// siteAdjustMode中だけ、メイン敷地と同じSITE_XFORMで描画。
 function drawSiteRefs(){
   siteRefLayer.clearLayers();
-  if(!siteAdjustMode || !SITE.refShapes || !SITE_XFORM) return;
-  SITE.refShapes.forEach(ref=>{
+  if(!siteAdjustMode || !SITE_XFORM) return;
+  [...(SITE.refShapes||[]), ...(SITE.subAreas||[])].forEach(ref=>{
     const latlngs=shapeToLatLngs(ref.pts, SITE_XFORM).map(p=>[p.lat,p.lon]);
     const color = ref.isRoad ? '#5ab0ff' : '#9fb0c0';
     L.polygon(latlngs,{color,weight:2,dashArray:'6,4',fill:true,fillOpacity:0.08,interactive:false}).addTo(siteRefLayer);
@@ -1183,7 +1198,11 @@ async function generateFlat(){
   const nMin=Math.min(...sEN.map(p=>p.n))-margin, nMax=Math.max(...sEN.map(p=>p.n))+margin;
   const prog=document.getElementById('flatProg');
   let cols=Math.floor((eMax-eMin)/g)+1, rows=Math.floor((nMax-nMin)/g)+1;
-  while(cols*rows>3000){ g*=1.5; cols=Math.floor((eMax-eMin)/g)+1; rows=Math.floor((nMax-nMin)/g)+1; }
+  // 3000点を超える広い敷地は、指定間隔のまま取るか自動で粗くするかを選べる（帯生成の確認ダイアログと同じ流儀）
+  if(cols*rows>3000 &&
+     !confirm(`指定の格子間隔${gInput}mだと約${cols*rows}点の標高取得になります（数分かかる場合があります）。\n\nOK＝そのまま${gInput}mで取得（精度優先）\nキャンセル＝間隔を自動で粗くして短時間で取得`)){
+    while(cols*rows>3000){ g*=1.5; cols=Math.floor((eMax-eMin)/g)+1; rows=Math.floor((nMax-nMin)/g)+1; }
+  }
   const adjustedMsg=(g>gInput+1e-9)?`間隔を${g.toFixed(1)}mに自動調整／`:'';
   const grid=[];
   for(let r=0;r<rows;r++){
@@ -1215,8 +1234,23 @@ async function generateFlat(){
   drawFlat();
 }
 
-// 平坦度の色（3段階＋赤グラデ）。凡例ボックス・結果テキストとも共通で使う。
+// 平坦度の色（3段階＋赤グラデ）。凡例ボックス・結果表・セル色・枠線とも共通で使う。
 const FLAT_COLORS = {flat:'#3b82f6', grade:'#22c55e', steep:'#f59e0b', over:'#d92645'};
+// 区分の定義はここが唯一の正本。セル色・凡例・面積表・枠線が全部ここを見る（1箇所直せば全部揃う）
+const FLAT_CATS = [
+  {key:'flat',  label:'平ら',         note:'そのまま使える'},
+  {key:'grade', label:'軽い造成で可', note:''},
+  {key:'steep', label:'要造成',       note:''},
+  {key:'over',  label:'傾斜地',       note:''}
+];
+function flatClassOf(adh, th){   // 高低差の絶対値→区分キー（分類ロジックの正本）
+  return adh<=th.flatM ? 'flat' : adh<=th.gradeM ? 'grade' : adh<=th.steepM ? 'steep' : 'over';
+}
+function flatRangeText(key, th){
+  return key==='flat' ? `±${th.flatCm}cm` : key==='grade' ? `±${th.gradeCm}cm`
+       : key==='steep' ? `±${th.steepCm}cm` : `${th.steepCm}cm超`;
+}
+const tsuboOf = x => x/3.305785;
 function flatThresholds(){
   const flatCm=parseFloat(document.getElementById('fFlatCm').value)||20;
   const gradeCm=parseFloat(document.getElementById('fGradeCm').value)||50;
@@ -1230,18 +1264,16 @@ function drawFlat(){
   const {g,cells,cLat,cLon}=FLAT_GRID;
   const mLat=111320, mLon=111320*Math.cos(rad(cLat));
   const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
-  const {flatM,gradeM,steepM}=flatThresholds();
+  const th=flatThresholds(), {steepM}=th;
   const half=g/2;
   const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
   const c1=[0xff,0x9d,0x5c], c2=[0xd9,0x26,0x45];   // '#ff9d5c'→'#d92645'（傾斜地グラデ）
   cells.forEach(cell=>{
     if(cell.dh==null) return;   // 取得失敗点は塗らない
     const adh=Math.abs(cell.dh);
-    let col;
-    if(adh<=flatM) col=FLAT_COLORS.flat;
-    else if(adh<=gradeM) col=FLAT_COLORS.grade;
-    else if(adh<=steepM) col=FLAT_COLORS.steep;
-    else{
+    const key=flatClassOf(adh,th);
+    let col=FLAT_COLORS[key];
+    if(key==='over'){
       const t=Math.min(1,(adh-steepM)/Math.max(0.01,(3.0-steepM)));   // 300cm=3.0m
       const r=lerp(c1[0],c2[0],t), gg=lerp(c1[1],c2[1],t), b=lerp(c1[2],c2[2],t);
       col='#'+[r,gg,b].map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -1250,6 +1282,14 @@ function drawFlat(){
     const op=inside?0.55:0.25;   // 敷地内外で濃淡を分ける
     const sw=toLL(cell.e-half,cell.n-half), ne=toLL(cell.e+half,cell.n+half);
     L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:col,fillOpacity:op,interactive:false}).addTo(flatLayer);
+  });
+  // 内部分割（A/B/C等）の境界を薄く重ねる＝結果表の区画別行がどこを指すか地図で分かる
+  subAreaPolys().forEach(s=>{
+    const ll=s.latlngs.map(p=>[p.lat,p.lon]);
+    L.polygon(ll,{color:'#ffffff',weight:2,opacity:.9,dashArray:'5,4',fill:false,interactive:false}).addTo(flatLayer);
+    const c=ll.reduce((a,p)=>[a[0]+p[0],a[1]+p[1]],[0,0]).map(v=>v/ll.length);
+    L.marker(c,{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
+      html:`<div style="font:700 11px/1.2 sans-serif;color:#fff;background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(flatLayer);
   });
   drawFlatContours();
   const areas=computeFlatAreas();
@@ -1362,35 +1402,50 @@ function drawFlatContours(){
     });
   });
 }
+// 指定範囲（内外判定の関数）のセルを4区分に集計。全体も区画別もこの1本を通す＝数字がズレない
+function tallyFlat(inTest){
+  const {g,cells}=FLAT_GRID, th=flatThresholds(), cellArea=g*g;
+  const r={total:0,miss:0,flat:0,grade:0,steep:0,over:0};
+  cells.forEach(c=>{
+    if(!inTest(c.lat,c.lon)) return;
+    r.total+=cellArea;
+    if(c.dh==null){ r.miss+=cellArea; return; }   // 欠測は分類外（合計には含む）
+    r[flatClassOf(Math.abs(c.dh), th)] += cellArea;
+  });
+  return r;
+}
+// 集計結果を表（色/区分/高低差/㎡/坪/％）にする
+function flatTableHTML(title, r, th){
+  const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
+  const pct=x=> r.total>0 ? (x/r.total*100).toFixed(1)+'%' : '—';
+  let rows=FLAT_CATS.map(c=>
+    `<tr><td class="c" style="color:${FLAT_COLORS[c.key]}">■</td>`+
+    `<td class="l">${c.label}</td><td>${flatRangeText(c.key,th)}</td>`+
+    `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td></tr>`).join('');
+  if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td></tr>`;
+  return `<table class="ftab"><caption>${title}　約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
+    `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th></tr>${rows}`+
+    `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td></tr></table>`;
+}
 function computeFlatAreas(){
   const el=document.getElementById('flatResult');
   if(!FLAT_GRID || !el) return null;
-  const {g,cells}=FLAT_GRID;
-  const {flatCm,gradeCm,steepCm,flatM,gradeM,steepM}=flatThresholds();
-  const cellArea=g*g, tsubo=x=>x/3.305785;
-  let aTotal=0,aFlat=0,aGrade=0,aSteep=0,aOver=0;
-  cells.forEach(c=>{
-    if(!pointInSite(c.lat,c.lon)) return;
-    aTotal+=cellArea;
-    if(c.dh==null) return;   // 欠測は分類外（合計面積には含む）
-    const adh=Math.abs(c.dh);
-    if(adh<=flatM) aFlat+=cellArea;
-    else if(adh<=gradeM) aGrade+=cellArea;
-    else if(adh<=steepM) aSteep+=cellArea;
-    else aOver+=cellArea;
-  });
-  const f=x=>x.toFixed(0), t=x=>tsubo(x).toFixed(1);
+  const th=flatThresholds();
+  const all=tallyFlat(pointInSite);
   const hsrcTxt = (flatRef && flatRef.hsrc) ? `国土地理院DEM（当地点は${flatRef.hsrc}。データ源は地点により異なる）` : '国土地理院DEM（データ源は地点により異なる＝5mメッシュとは限らない）';
+  let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さ±で判定）<br>`
+    + flatTableHTML('敷地 全体', all, th);
+  // 区画別（内部分割を持つ物件だけ。同じ基準点・同じ取得済み標高で即座に比較できる）
+  const subs=subAreaPolys();
+  if(subs.length){
+    html+=`<div style="margin-top:6px;font-weight:700;color:#9fb0c0">区画別の内訳</div>`;
+    subs.forEach(s=>{ html+=flatTableHTML(s.no, tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs)), th); });
+  }
+  html+=`<span style="color:${FLAT_COLORS.flat}">―</span>青実線=平ら／<span style="color:${FLAT_COLORS.grade}">- -</span>緑破線=軽造成／<span style="color:${FLAT_COLORS.steep}">- -</span>橙破線=要造成（地図上の領域アウトライン）<br>`
+    + `<span class="src">${hsrcTxt}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
   el.style.display='block';
-  el.innerHTML=
-    `<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>　敷地面積 約${f(aTotal)}㎡（${t(aTotal)}坪）<br>`+
-    `<span style="color:${FLAT_COLORS.flat}">■</span>平ら（±${flatCm}cm以内・そのまま使える目安）：<b>約${f(aFlat)}㎡</b>（${t(aFlat)}坪）<br>`+
-    `<span style="color:${FLAT_COLORS.grade}">■</span>軽い造成で可（±${gradeCm}cm以内）：約${f(aGrade)}㎡（${t(aGrade)}坪）<br>`+
-    `<span style="color:${FLAT_COLORS.steep}">■</span>要造成（±${steepCm}cm以内）：約${f(aSteep)}㎡（${t(aSteep)}坪）<br>`+
-    `<span style="color:${FLAT_COLORS.over}">■</span>傾斜地（±${steepCm}cm超）：約${f(aOver)}㎡（${t(aOver)}坪）<br>`+
-    `<span style="color:${FLAT_COLORS.flat}">―</span>青実線=平ら／<span style="color:${FLAT_COLORS.grade}">- -</span>緑破線=軽造成／<span style="color:${FLAT_COLORS.steep}">- -</span>橙破線=要造成（地図上の領域アウトライン）<br>`+
-    `<span class="src">${hsrcTxt}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
-  return {flatCm,gradeCm,steepCm,flatM,gradeM,steepM,aTotal,aFlat,aGrade,aSteep,aOver};
+  el.innerHTML=html;
+  return {...th, aTotal:all.total, aFlat:all.flat, aGrade:all.grade, aSteep:all.steep, aOver:all.over};
 }
 
 /* ====== 平坦度エリアの枠付き描画（連結成分ごとに外周をトレース） ====== */
