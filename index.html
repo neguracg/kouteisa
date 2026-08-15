@@ -257,6 +257,10 @@
     <div class="card tool-flat edit-only">
       <h2>平坦度判定（道路レベル基準）</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button id="flatSchemeCutfillBtn" class="small primary" style="flex:1" onclick="setFlatScheme('cutfill')">切土/盛土（新方式）</button>
+        <button id="flatSchemeLegacyBtn" class="small" style="flex:1" onclick="setFlatScheme('legacy')">±20/50/80（旧方式）</button>
+      </div>
       <button id="subAreaToggleBtn" class="small" style="width:100%;margin-top:6px;display:none" onclick="toggleSubAreaVariant()"></button>
       <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
         <div class="hint" style="margin:0 0 6px">D/E分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）。<b>E区画</b>が主役：ラインを動かすたびに、その時のE区画だけで「使える面積」が最大になる基準点を自動で探して反映します。</div>
@@ -270,20 +274,21 @@
           <button class="small" onclick="applyDeTargetArea()">この面積になる%へ</button>
         </div>
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
-          <label style="font-size:12px">E区画 目標「使える面積」(平+軽造成・坪)<input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150" style="width:60px"></label>
+          <label style="font-size:12px">E区画 目標「使える面積」(坪)<input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150" style="width:60px"></label>
           <button class="small" onclick="applyDeTargetUsable()">この使える面積になる%へ</button>
         </div>
       </div>
-      <div class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
+      <div id="legacyParams" class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px;display:none">
         <label>平ら ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
         <label>軽造成 ±cm<input id="fGradeCm" type="text" inputmode="decimal" value="50"></label>
         <label>要造成 ±cm<input id="fSteepCm" type="text" inputmode="decimal" value="80"></label>
       </div>
+      <div id="cutfillNote" class="hint" style="margin-top:8px">切土/盛土とも共通の段階：0〜30cm地ならし／30〜50cm土工／50〜100cm小型擁壁級／100cm超は造成（グラデーション）。</div>
       <div class="params" style="grid-template-columns:1fr 1fr;margin-top:8px">
         <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="1"></label>
         <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
       </div>
-      <div class="hint">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
+      <div id="legacyHint" class="hint" style="display:none">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
       <div style="margin-top:4px"><button class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button></div>
       <div style="margin-top:6px"><button class="small" style="width:100%" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button></div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
@@ -426,6 +431,9 @@ flatLegendControl.onAdd = function(){
   return flatLegendDiv;
 };
 function flatLegendHTML(){
+  return (typeof FLAT_SCHEME!=='undefined' && FLAT_SCHEME==='legacy') ? legacyLegendHTML() : cutFillLegendHTML();
+}
+function legacyLegendHTML(){
   const flatCmEl=document.getElementById('fFlatCm'), gradeCmEl=document.getElementById('fGradeCm'), steepCmEl=document.getElementById('fSteepCm');
   const flatCm=flatCmEl?flatCmEl.value:20, gradeCm=gradeCmEl?gradeCmEl.value:50, steepCm=steepCmEl?steepCmEl.value:80;
   return `<b>平坦度 凡例</b><br>`+
@@ -433,6 +441,14 @@ function flatLegendHTML(){
     `<span style="color:${FLAT_COLORS.grade}">■</span>±${gradeCm}cm 軽い造成で可<br>`+
     `<span style="color:${FLAT_COLORS.steep}">■</span>±${steepCm}cm 要造成<br>`+
     `<span style="color:${FLAT_COLORS.over}">■</span>それ以上 傾斜地<br>`+
+    `<span style="color:#ff2d2d">―</span>赤太線＝基準ライン（基準点と同じ標高）`;
+}
+function cutFillLegendHTML(){
+  const rows=CUTFILL_BAND_LABELS.map((label,i)=>{
+    const rangeTxt=['0-30cm','30-50cm','50-100cm','100cm超'][i];
+    return `<span style="color:${CUTFILL_COLORS.cut[i]}">■</span><span style="color:${CUTFILL_COLORS.fill[i]}">■</span>${rangeTxt} ${label}<br>`;
+  }).join('');
+  return `<b>平坦度 凡例（暖色=切土／寒色=盛土）</b><br>${rows}`+
     `<span style="color:#ff2d2d">―</span>赤太線＝基準ライン（基準点と同じ標高）`;
 }
 function updateFlatLegend(){ if(flatLegendDiv) flatLegendDiv.innerHTML=flatLegendHTML(); }
@@ -1205,6 +1221,31 @@ function buildSharedBand(){
 }
 
 /* ====== 平坦度判定（前面道路レベル=0基準） ====== */
+// 表示方式：'cutfill'=切土/盛土を分けて4段階＋土量（既定）／'legacy'=旧±20/50/80方式（絶対値のみ）
+let FLAT_SCHEME = (function(){ try{ const s=localStorage.getItem('kouteisa_flat_scheme'); return (s==='legacy')?'legacy':'cutfill'; }catch(e){ return 'cutfill'; } })();
+function setFlatScheme(s){
+  FLAT_SCHEME = (s==='legacy') ? 'legacy' : 'cutfill';
+  try{ localStorage.setItem('kouteisa_flat_scheme', FLAT_SCHEME); }catch(e){}
+  updateFlatSchemeUI();
+  if(FLAT_GRID) drawFlat();
+}
+function updateFlatSchemeUI(){
+  const cf=document.getElementById('flatSchemeCutfillBtn'), lg=document.getElementById('flatSchemeLegacyBtn');
+  const legacyParams=document.getElementById('legacyParams'), legacyHint=document.getElementById('legacyHint'), cfNote=document.getElementById('cutfillNote');
+  const isLegacy=(FLAT_SCHEME==='legacy');
+  if(cf) cf.classList.toggle('primary', !isLegacy);
+  if(lg) lg.classList.toggle('primary', isLegacy);
+  if(legacyParams) legacyParams.style.display = isLegacy ? 'grid' : 'none';
+  if(legacyHint) legacyHint.style.display = isLegacy ? 'block' : 'none';
+  if(cfNote) cfNote.style.display = isLegacy ? 'none' : 'block';
+  updateFlatLegend();
+}
+// 「使える面積最大化」「DE分割の目標使える面積」が使う"使える"のしきい値(m)。
+// 旧方式＝ユーザーが編集した「軽い造成まで」の値をそのまま使う。新方式＝土工(30-50cm)までの累計＝50cm。
+// どちらも「その表示スキームの2段目までの累計」という同じ考え方で、新方式のために別概念を作ってはいない。
+function currentUsableM(){
+  return (FLAT_SCHEME==='legacy') ? flatThresholds().gradeM : 0.5;
+}
 let flatRef=null;     // {lat,lon,elev}
 let FLAT_GRID=null;   // {g,cols,rows,en0:{e,n},cLat,cLon,cells:[{e,n,lat,lon,elev,dh}]}（標高は取得済みキャッシュ）
 let FLAT_GRID_SIG=null;   // FLAT_GRID取得時の[物件,配置,格子間隔]の指紋。変わっていなければ再取得は不要
@@ -1290,17 +1331,17 @@ function bestUsableAreaForCells(cells, gradeM){
 // 区画A/B/C等の個別事情は考慮しない全体最適）。実在する標高点の中から目標標高に一番近い点を採用。
 function optimizeFlatRef(){
   if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
-  const {gradeM}=flatThresholds();
+  const usableM=currentUsableM();
   // 敷地全体をbestRefForRegion()に渡す＝DE分割のE区画版と全く同じロジックを共有（重複実装しない）。
   // SITE.shapeをshapeToLatLngsしたものはsiteLatLngsと同一（どちらもSITE_XFORM由来）なのでpointInSite相当。
-  const best=bestRefForRegion(SITE.shape, gradeM);
+  const best=bestRefForRegion(SITE.shape, usableM);
   if(!best || !best.cell){ alert('敷地内に有効な標高データがありません。'); return; }
   flatRef={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev, hsrc: flatRef?flatRef.hsrc:null};
   drawFlatRef(); saveFlatRef();
   recomputeFlatOnly();
   const prog=document.getElementById('flatProg');
   const tsubo=x=>(x/3.305785).toFixed(1);
-  if(prog) prog.textContent=`自動選択：基準標高${best.cell.elev.toFixed(1)}m → 使える面積(平ら+軽造成) 約${best.area.toFixed(0)}㎡（${tsubo(best.area)}坪）が最大`;
+  if(prog) prog.textContent=`自動選択：基準標高${best.cell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${best.area.toFixed(0)}㎡（${tsubo(best.area)}坪）が最大`;
 }
 
 /* ====== DE分割案：任意%で分割線を平行にずらす（SITE.splitAxisを持つ物件だけ・平井専用機能） ====== */
@@ -1364,8 +1405,8 @@ function applyDeSplitPercent(pctE){
   if(info) info.textContent=`E 約${r.areaE.toFixed(0)}㎡（${t(r.areaE)}坪）／ D 約${r.areaD.toFixed(0)}㎡（${t(r.areaD)}坪）`;
   if(subAreaVariant==='DE') drawSiteRefs();
   if(!FLAT_GRID) return r;   // 格子未取得＝面積の表示だけで、基準点の最適化はまだできない
-  const {gradeM}=flatThresholds();
-  const best=bestRefForRegion(r.E, gradeM);
+  const usableM=currentUsableM();
+  const best=bestRefForRegion(r.E, usableM);
   if(best && best.cell){
     flatRef={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev, hsrc:flatRef?flatRef.hsrc:null};
     drawFlatRef(); saveFlatRef();
@@ -1391,8 +1432,8 @@ function applyDeTargetUsable(){
   const v=parseFloat(document.getElementById('deTargetUsable').value);
   if(!v || v<=0){ alert('E区画の目標「使える面積」(坪)を入力してください。'); return; }
   const targetM2=v*3.305785;
-  const {gradeM}=flatThresholds();
-  const usableAt=(pctE)=> bestRefForRegion(splitSiteByPercent(100-pctE).E, gradeM);
+  const usableM=currentUsableM();
+  const usableAt=(pctE)=> bestRefForRegion(splitSiteByPercent(100-pctE).E, usableM);
   const at05=usableAt(0.5), at995=usableAt(99.5);
   if(targetM2>at995.area+1e-6){ alert(`このD/E分割方向では、E区画は最大でも約${(at995.area/3.305785).toFixed(1)}坪までしか「使える面積」を確保できません。`); return; }
   let pctFinal=0.5;
@@ -1485,26 +1526,46 @@ function flatThresholds(){
   const flatM=flatCm/100, gradeM=Math.max(flatM,gradeCm/100), steepM=Math.max(gradeM,steepCm/100);
   return {flatCm,gradeCm,steepCm,flatM,gradeM,steepM};
 }
+function lerpRGB(c1,c2,t){ return [0,1,2].map(i=>Math.round(c1[i]+(c2[i]-c1[i])*t)); }
+function rgbToHex(rgb){ return '#'+rgb.map(x=>x.toString(16).padStart(2,'0')).join(''); }
+// 旧方式（絶対値1軸4段階）のセル色。drawFlat()から分離しただけで挙動は変更していない。
+function legacyCellColor(dh, th){
+  const adh=Math.abs(dh), key=flatClassOf(adh,th);
+  if(key!=='over') return FLAT_COLORS[key];
+  const c1=[0xff,0x9d,0x5c], c2=[0xd9,0x26,0x45];   // '#ff9d5c'→'#d92645'
+  const t=Math.min(1,(adh-th.steepM)/Math.max(0.01,(3.0-th.steepM)));   // 300cm=3.0m
+  return rgbToHex(lerpRGB(c1,c2,t));
+}
+/* ====== 新方式：切土/盛土（共通の段階を色系統だけで区別。dhの符号で自動判定） ======
+   段階の境界は切土・盛土で共通：0-30cm地ならし／30-50cm土工／50-100cm小型擁壁級／100cm超は造成(グラデ)。
+   色は暖色(切土)/寒色(盛土)の2系統、段階が進むほど濃くする（左右で明度を揃え、濃さだけで比較できるように）。 */
+const CUTFILL_BAND_MAX=[0.30,0.50,1.00,Infinity];
+const CUTFILL_BAND_LABELS=['地ならし','土工','小型擁壁級','造成'];
+const CUTFILL_COLORS={ cut:['#ffd7ad','#ff9d5c','#e0491f','#b81f1f'], fill:['#bfe0ff','#4a9eff','#1d54c9','#15277a'] };
+const CUTFILL_GRAD_END={ cut:[0x5c,0x0a,0x0a], fill:[0x0d,0x14,0x40] };   // 造成(100cm超)の最も濃い到達色(300cm上限)
+function cutFillBandOf(adh){
+  for(let i=0;i<CUTFILL_BAND_MAX.length;i++) if(adh<=CUTFILL_BAND_MAX[i]) return i;
+  return CUTFILL_BAND_MAX.length-1;
+}
+function cutFillColor(dh){
+  const dir = dh>=0 ? 'cut' : 'fill';
+  const adh=Math.abs(dh), band=cutFillBandOf(adh);
+  if(band<3) return CUTFILL_COLORS[dir][band];
+  const c1=CUTFILL_COLORS[dir][3].match(/[0-9a-f]{2}/gi).map(h=>parseInt(h,16));
+  const t=Math.min(1,(adh-1.0)/(3.0-1.0));   // 100cm→300cmで最大濃度（旧方式と同じ300cm上限を踏襲）
+  return rgbToHex(lerpRGB(c1,CUTFILL_GRAD_END[dir],t));
+}
 function drawFlat(){
   if(!FLAT_GRID) return;
   flatLayer.clearLayers();
   const {g,cells,cLat,cLon}=FLAT_GRID;
   const mLat=111320, mLon=111320*Math.cos(rad(cLat));
   const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
-  const th=flatThresholds(), {steepM}=th;
+  const th=flatThresholds();   // legacy方式のときだけ使う（cutfill方式では未使用）
   const half=g/2;
-  const lerp=(a,b,t)=>Math.round(a+(b-a)*t);
-  const c1=[0xff,0x9d,0x5c], c2=[0xd9,0x26,0x45];   // '#ff9d5c'→'#d92645'（傾斜地グラデ）
   cells.forEach(cell=>{
     if(cell.dh==null) return;   // 取得失敗点は塗らない
-    const adh=Math.abs(cell.dh);
-    const key=flatClassOf(adh,th);
-    let col=FLAT_COLORS[key];
-    if(key==='over'){
-      const t=Math.min(1,(adh-steepM)/Math.max(0.01,(3.0-steepM)));   // 300cm=3.0m
-      const r=lerp(c1[0],c2[0],t), gg=lerp(c1[1],c2[1],t), b=lerp(c1[2],c2[2],t);
-      col='#'+[r,gg,b].map(x=>x.toString(16).padStart(2,'0')).join('');
-    }
+    const col = FLAT_SCHEME==='legacy' ? legacyCellColor(cell.dh,th) : cutFillColor(cell.dh);
     const inside=pointInSite(cell.lat,cell.lon);
     const op=inside?0.55:0.25;   // 敷地内外で濃淡を分ける
     const sw=toLL(cell.e-half,cell.n-half), ne=toLL(cell.e+half,cell.n+half);
@@ -1519,8 +1580,8 @@ function drawFlat(){
       html:`<div style="font:700 11px/1.2 sans-serif;color:#fff;background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(flatLayer);
   });
   drawFlatContours();
-  const areas=computeFlatAreas();
-  drawFlatOutlines(areas);
+  const areas=computeFlatAreas();   // スキームに応じた表を描画（ディスパッチャ）
+  if(FLAT_SCHEME==='legacy') drawFlatOutlines(areas); else drawCutFillOutlines();
 }
 
 /* 素朴なmarching squares：格子セル4隅の値とレベルの符号からエッジ交点を求めて線分化 */
@@ -1660,12 +1721,18 @@ function flatTableHTML(title, r, th){
     `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th><th>累計％</th><th>累計坪</th></tr>${rows}`+
     `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td><td class="cum">100%</td><td class="cum">${t(r.total)}</td></tr></table>`;
 }
+function hsrcNoteText(){
+  return (flatRef && flatRef.hsrc) ? `国土地理院DEM（当地点は${flatRef.hsrc}。データ源は地点により異なる）` : '国土地理院DEM（データ源は地点により異なる＝5mメッシュとは限らない）';
+}
+// スキームに応じて結果パネルを描画するディスパッチャ（呼び出し元はスキームを意識しない）
 function computeFlatAreas(){
   const el=document.getElementById('flatResult');
   if(!FLAT_GRID || !el) return null;
+  return (FLAT_SCHEME==='legacy') ? computeFlatAreasLegacy(el) : computeFlatAreasCutFill(el);
+}
+function computeFlatAreasLegacy(el){
   const th=flatThresholds();
   const all=tallyFlat(pointInSite);
-  const hsrcTxt = (flatRef && flatRef.hsrc) ? `国土地理院DEM（当地点は${flatRef.hsrc}。データ源は地点により異なる）` : '国土地理院DEM（データ源は地点により異なる＝5mメッシュとは限らない）';
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さ±で判定）<br>`
     + flatTableHTML('敷地 全体', all, th);
   // 区画別（内部分割を持つ物件だけ。同じ基準点・同じ取得済み標高で即座に比較できる）
@@ -1675,10 +1742,65 @@ function computeFlatAreas(){
     subs.forEach(s=>{ html+=flatTableHTML(s.no, tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs)), th); });
   }
   html+=`<span style="color:${FLAT_COLORS.flat}">―</span>青実線=平ら／<span style="color:${FLAT_COLORS.grade}">- -</span>緑破線=軽造成／<span style="color:${FLAT_COLORS.steep}">- -</span>橙破線=要造成（地図上の領域アウトライン）<br>`
-    + `<span class="src">${hsrcTxt}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
+    + `<span class="src">${hsrcNoteText()}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
   el.style.display='block';
   el.innerHTML=html;
   return {...th, aTotal:all.total, aFlat:all.flat, aGrade:all.grade, aSteep:all.steep, aOver:all.over};
+}
+// 新方式：切土/盛土を分けて4段階＋区画別集計＋土量(㎥)。全体も区画別もtallyCutFill()の1本を通す。
+function tallyCutFill(inTest){
+  const {g,cells}=FLAT_GRID, cellArea=g*g;
+  const r={total:0, miss:0, cut:[0,0,0,0], fill:[0,0,0,0], cutVol:0, fillVol:0};
+  cells.forEach(c=>{
+    if(!inTest(c.lat,c.lon)) return;
+    r.total+=cellArea;
+    if(c.dh==null){ r.miss+=cellArea; return; }
+    const band=cutFillBandOf(Math.abs(c.dh));
+    if(c.dh>=0){ r.cut[band]+=cellArea; r.cutVol+=c.dh*cellArea; }
+    else{ r.fill[band]+=cellArea; r.fillVol+=(-c.dh)*cellArea; }
+  });
+  return r;
+}
+// 切土 or 盛土いずれか片方向の4段階＋累計坪の表（新方式の表の正本。cutFillTableHTMLから呼ぶ）
+function cutFillDirTableHTML(dirLabel, dir, arr){
+  const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
+  let cumTsubo=0;
+  const rangeTxt=['0〜30cm','30〜50cm','50〜100cm','100cm超'];
+  const rows=CUTFILL_BAND_LABELS.map((label,i)=>{
+    cumTsubo+=arr[i];
+    const cls = i===1 ? 'cum cum-key' : 'cum';   // 土工まで(=50cm)の累計＝現実的に使える面積の目安。赤字で強調。
+    return `<tr><td class="c" style="color:${CUTFILL_COLORS[dir][i]}">■</td><td class="l">${label}</td>`+
+      `<td>${rangeTxt[i]}</td><td>${f(arr[i])}</td><td>${t(arr[i])}</td><td class="${cls}">${t(cumTsubo)}</td></tr>`;
+  }).join('');
+  const sum=arr.reduce((a,b)=>a+b,0);
+  return `<table class="ftab"><caption>${dirLabel}　約${f(sum)}㎡（${t(sum)}坪）</caption>`+
+    `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>累計坪</th></tr>${rows}</table>`;
+}
+function cutFillTableHTML(title, r){
+  const netVol=r.cutVol-r.fillVol;
+  const netCol = netVol>=0 ? CUTFILL_COLORS.cut[2] : CUTFILL_COLORS.fill[2];
+  const volLine=`<div style="font-size:11px;margin:2px 0 6px">`+
+    `切土量 約${r.cutVol.toFixed(0)}㎥／盛土量 約${r.fillVol.toFixed(0)}㎥／差引 `+
+    `<b style="color:${netCol}">${netVol>=0?'+':''}${netVol.toFixed(0)}㎥（${netVol>=0?'切土超過':'盛土超過'}）</b></div>`;
+  return `<div style="font-weight:700;color:#e6edf3;margin-top:8px">${title}</div>`+volLine
+    + cutFillDirTableHTML('切土','cut',r.cut) + cutFillDirTableHTML('盛土','fill',r.fill);
+}
+function computeFlatAreasCutFill(el){
+  const all=tallyCutFill(pointInSite);
+  let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`
+    + cutFillTableHTML('敷地 全体', all);
+  const subs=subAreaPolys();
+  if(subs.length){
+    html+=`<div style="margin-top:6px;font-weight:700;color:#9fb0c0">区画別の内訳</div>`;
+    subs.forEach(s=>{ html+=cutFillTableHTML(s.no, tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs))); });
+  }
+  html+=`<div style="margin-top:6px">`+
+    `<span style="color:${CUTFILL_COLORS.cut[1]}">■</span>切土（削る）／<span style="color:${CUTFILL_COLORS.fill[1]}">■</span>盛土（盛る）。段階が濃いほど高低差が大きく、100cm超は連続グラデーションです。<br>`+
+    `<span class="src">土量は基準面との標高差×格子面積の単純合計による概算です。法面形状・締固め・場外搬出入は考慮していません。切土/盛土量の差引は良否判定に使わず、規模の目安としてご確認ください。`
+    + `${hsrcNoteText()}。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span></div>`;
+  el.style.display='block';
+  el.innerHTML=html;
+  return {aTotal:all.total};
 }
 
 /* ====== 平坦度エリアの枠付き描画（連結成分ごとに外周をトレース） ====== */
@@ -1793,6 +1915,29 @@ function drawFlatOutlines(areas){
     style:{color:FLAT_COLORS.flat, weight:3, fill:false, interactive:true},
     tooltip:`平ら（±${flatCm}cm）約${f(aFlat)}㎡（${t(aFlat)}坪）`
   });
+}
+// 新方式の輪郭線：8段階すべてに引くと煩雑になるので、切土50cm以内／盛土50cm以内の2本に絞る
+// （旧方式の「平ら＋軽造成」の輪郭と同じ考え方＝現実的に使える範囲の目安）。
+function drawCutFillOutlines(){
+  if(!FLAT_GRID) return;
+  const {g,cols,rows,en0,cells,cLat,cLon}=FLAT_GRID;
+  const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+  const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
+  const inSiteArr=cells.map(c=>pointInSite(c.lat,c.lon));
+  const MIN_ISLAND=2;
+  const drawGroup=(maskRaw, opts)=>{
+    const {comp,sizes}=gridComponents(maskRaw, rows, cols);
+    const mask=maskRaw.map((v,i)=> v && sizes[comp[i]]>MIN_ISLAND);
+    const inMask=(r,c)=>{ if(r<0||r>=rows||c<0||c>=cols) return false; return mask[r*cols+c]; };
+    traceMaskOutline(inMask, rows, cols, g, en0.e, en0.n).forEach(path=>{
+      const latlngs=path.map(p=>{const ll=toLL(p[0],p[1]); return [ll.lat,ll.lon];});
+      L.polygon(latlngs, opts.style).addTo(flatLayer).bindTooltip(opts.tooltip, {sticky:true});
+    });
+  };
+  const cutMask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && c.dh>=0 && c.dh<=0.5);
+  drawGroup(cutMask, {style:{color:CUTFILL_COLORS.cut[1], weight:3, fill:false, interactive:true}, tooltip:'切土50cm以内'});
+  const fillMask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && c.dh<0 && -c.dh<=0.5);
+  drawGroup(fillMask, {style:{color:CUTFILL_COLORS.fill[1], weight:3, fill:false, interactive:true}, tooltip:'盛土50cm以内'});
 }
 
 function clearFlat(){
@@ -2464,6 +2609,7 @@ if(!_shared){ map.setView([siteAdj.lat,siteAdj.lon], map.getZoom()); }
 drawSite();
 if(SITE.splitAxis) applyDeSplitPercent(50);
 updateSubAreaToggleUI();
+updateFlatSchemeUI();
 flatRef=loadFlatRef();
 drawFlatRef();
 setTool(TOOL);
