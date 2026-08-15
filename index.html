@@ -1544,8 +1544,8 @@ const CUTFILL_BAND_MAX=[0.30,0.50,1.00,Infinity];
 const CUTFILL_BAND_LABELS=['地ならし','土工','小型擁壁級','造成'];
 // 色は切土/盛土で分けない（見た目が煩雑になるため統一・色では方向を区別しない方針に変更）。
 // 高低差の絶対値だけで1系統4段階＋グラデーション。方向は基準ライン上のバッジ表示で示す。
-const CUTFILL_COLORS=['#ffe1ad','#ff9d5c','#e0491f','#c81e1e'];
-const CUTFILL_GRAD_END=[0x5c,0x0a,0x0a];   // 造成(100cm超)の最も濃い到達色(300cm上限)
+const CUTFILL_COLORS=['#3b82f6','#8bc34a','#ff9800','#e53935'];   // 30cm青／50cm黄緑／100cmオレンジ／100超は赤系グラデ開始
+const CUTFILL_GRAD_END=[0x6b,0x0a,0x0a];   // 造成(100cm超)の最も濃い到達色(300cm上限)
 function cutFillBandOf(adh){
   for(let i=0;i<CUTFILL_BAND_MAX.length;i++) if(adh<=CUTFILL_BAND_MAX[i]) return i;
   return CUTFILL_BAND_MAX.length-1;
@@ -1672,10 +1672,14 @@ function cellDhNear(e,n,grid){
   const cell=cells[r*cols+c];
   return cell? cell.dh : null;
 }
-// 基準ライン(dh=0)を挟んで切土/盛土のバッジを置く（新方式のみ・色でなくラベルで方向を示す）
-function drawCutFillBadges(path, grid, toLL){
-  if(path.length<4) return;   // 短すぎる断片は判定が不安定なのでバッジを置かない
-  const mi=Math.floor(path.length/2), mid=path[mi], prev=path[Math.max(0,mi-1)];
+// 基準ライン(dh=0)を挟んで切土/盛土のバッジを「敷地全体で1組だけ」置く（新方式のみ・色でなく
+// ラベルで方向を示す）。paths(dh=0の全区間)の中から最長のものを1本選び、その中心で判定する
+// （区間ごとに置くとバッジが増えすぎるため。小さめ・半透明で邪魔にならないように）。
+function drawCutFillBadges(paths, grid, toLL){
+  if(!paths.length) return;
+  const longest = paths.reduce((a,b)=> b.length>a.length ? b : a);
+  if(longest.length<4) return;   // 短すぎる断片は判定が不安定なのでバッジを置かない
+  const mi=Math.floor(longest.length/2), mid=longest[mi], prev=longest[Math.max(0,mi-1)];
   let tx=mid.e-prev.e, tn=mid.n-prev.n; const tl=Math.hypot(tx,tn)||1; tx/=tl; tn/=tl;
   const nx=-tn, nn=tx, off=Math.max(3, grid.g*1.5);   // 法線方向に数m離れた場所を見て高低を判定
   const pA={e:mid.e+nx*off, n:mid.n+nn*off}, pB={e:mid.e-nx*off, n:mid.n-nn*off};
@@ -1684,11 +1688,11 @@ function drawCutFillBadges(path, grid, toLL){
   const cutPt = dhA>=dhB ? pA : pB, fillPt = dhA>=dhB ? pB : pA;
   const badge=(pt,label,bg)=>{
     const ll=toLL(pt.e,pt.n);
-    L.marker([ll.lat,ll.lon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[15,10],
-      html:`<div style="font:700 11px/1.5 sans-serif;color:#fff;background:${bg};padding:1px 7px;border-radius:9px;white-space:nowrap;box-shadow:0 0 3px #000">${label}</div>`})}).addTo(flatLayer);
+    L.marker([ll.lat,ll.lon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[11,8],
+      html:`<div style="font:700 9px/1.4 sans-serif;color:#fff;background:${bg};padding:0 4px;border-radius:7px;white-space:nowrap;opacity:.62">${label}</div>`})}).addTo(flatLayer);
   };
-  badge(cutPt, '▲切土', '#c8481f');
-  badge(fillPt, '▼盛土', '#2d6cb5');
+  badge(cutPt, '切土', '#c8481f');
+  badge(fillPt, '盛土', '#2d6cb5');
 }
 function drawFlatContours(){
   if(!FLAT_GRID) return;
@@ -1716,8 +1720,8 @@ function drawFlatContours(){
       const pl=L.polyline(latlngs,{color,weight,opacity:isZero?0.95:0.85,interactive:(isMeter||isZero)}).addTo(flatLayer);
       if(isZero) pl.bindTooltip(`基準ライン（標高${flatRef&&flatRef.elev!=null?flatRef.elev.toFixed(1):'—'}m と同じ高さの等高線）`,{sticky:true});
       else if(isMeter) pl.bindTooltip(`${lvl>0?'+':''}${lvl.toFixed(0)}m`,{sticky:true});
-      if(isZero && FLAT_SCHEME==='cutfill') drawCutFillBadges(path, FLAT_GRID, toLL);
     });
+    if(isZero && FLAT_SCHEME==='cutfill') drawCutFillBadges(paths, FLAT_GRID, toLL);
   });
 }
 // 指定範囲（内外判定の関数）のセルを4区分に集計。全体も区画別もこの1本を通す＝数字がズレない
@@ -1964,9 +1968,10 @@ function drawCutFillOutlines(){
     });
   };
   const maskAt=(thr)=> cells.map((c,i)=> inSiteArr[i] && c.dh!=null && Math.abs(c.dh)<=thr);
+  // 塗り色が青/黄緑/オレンジ/赤と変わったため、境界線は全色に強くコントラストする黒系に統一。
   // 描画順：控えめな30cm・100cmを先に、最重要の50cmを最後（上）に重ねる
-  drawGroup(maskAt(0.30), {style:{color:'#8fa3b8', weight:1.5, dashArray:'3,4', opacity:.6, fill:false, interactive:true}, tooltip:'30cm以内（地ならし）'});
-  drawGroup(maskAt(1.00), {style:{color:'#8fa3b8', weight:1.5, dashArray:'2,7', opacity:.5, fill:false, interactive:true}, tooltip:'100cm以内'});
+  drawGroup(maskAt(0.30), {style:{color:'#10151b', weight:2, dashArray:'4,4', opacity:.85, fill:false, interactive:true}, tooltip:'30cm以内（地ならし）'});
+  drawGroup(maskAt(1.00), {style:{color:'#10151b', weight:2, dashArray:'1,5', opacity:.85, fill:false, interactive:true}, tooltip:'100cm以内'});
   drawGroup(maskAt(0.50), {style:{color:'#ffffff', weight:4, opacity:1, fill:false, interactive:true}, tooltip:'50cm境界（土工まで＝現実的に使える範囲の目安・最重要）'});
 }
 
