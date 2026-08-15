@@ -20,7 +20,7 @@
   .layout{display:flex;height:calc(100% - 47px);min-height:0}
   .mapcol{flex:1;min-width:0;display:flex;flex-direction:column}
   #map{flex:1;min-height:200px;background:#1a2530}
-  .side{width:520px;max-width:52vw;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:14px}
+  .side{width:400px;max-width:42vw;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:10px}
   @media(max-width:820px){
     .layout{flex-direction:column;height:auto}
     #map{height:46vh}
@@ -74,12 +74,13 @@
   .dot-icon{background:transparent !important;border:none !important}
   .numlbl{width:18px;height:18px;border-radius:50%;background:#ff3b6b;color:#fff;font:700 11px/18px sans-serif;text-align:center;box-shadow:0 0 3px #000}
   /* 断面図パネル */
-  .section{height:312px;background:var(--panel);border-top:2px solid var(--accent);display:flex;flex-direction:column;padding:8px 10px 6px}
+  .section{height:min(48vh,460px);min-height:340px;background:var(--panel);border-top:2px solid var(--accent);display:flex;flex-direction:column;padding:8px 10px 6px}
   .section.hidden{display:none}
-  .sec-head{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap}
-  .sec-head b{font-size:13px;color:var(--accent)}
+  .sec-head{display:flex;align-items:center;gap:6px;font-size:11px;flex-wrap:wrap;row-gap:3px}
+  .sec-head b{font-size:12px;color:var(--accent)}
   .sec-head .muted{color:var(--muted)}
-  .sec-readout{font-size:13px;margin:5px 0 2px;min-height:20px}
+  .sec-head button.small{padding:3px 7px;font-size:11px}
+  .sec-readout{font-size:12px;line-height:1.4;margin:4px 0 2px;min-height:18px}
   .sec-readout .delta{font-size:20px;font-weight:700;color:var(--warn);margin:0 4px}
   .sec-readout .pa{color:var(--warn);font-weight:700}
   .sec-readout .pb{color:var(--accent);font-weight:700}
@@ -107,6 +108,7 @@
   .ftab td.l{text-align:left}
   .ftab td.c{text-align:center}
   .ftab td.cum,.ftab th:last-child{background:#132430;font-weight:700;color:#8fd6ff}
+  .ftab td.cum-key{color:#ff5d7a;font-size:13px}
   .ftab tr.tot td{background:#16222e;font-weight:700}
   body.viewmode #viewBanner{display:block;background:rgba(63,167,255,.15);border:1px solid var(--accent);color:#cfe0ef;font-size:12px;padding:9px 11px;border-radius:8px;line-height:1.6}
   .explain{font-size:12px;line-height:1.7;color:#cdd9e5}
@@ -1647,9 +1649,11 @@ function flatTableHTML(title, r, th){
   let cum=0, cumTsubo=0;   // 「平ら」から順に積み上げた累計＝「ここまでの合計で使える分」
   let rows=FLAT_CATS.map(c=>{
     cum+=r[c.key]; cumTsubo+=r[c.key];
+    // 「軽い造成で可」までの累計坪＝現実的に使える面積の目安として最重要な数字。赤字で強調。
+    const cumTsuboCls = c.key==='grade' ? 'cum cum-key' : 'cum';
     return `<tr><td class="c" style="color:${FLAT_COLORS[c.key]}">■</td>`+
     `<td class="l">${c.label}</td><td>${flatRangeText(c.key,th)}</td>`+
-    `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td><td class="cum">${pct(cum)}</td><td class="cum">${tsuboOf(cumTsubo).toFixed(1)}</td></tr>`;
+    `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td><td class="cum">${pct(cum)}</td><td class="${cumTsuboCls}">${tsuboOf(cumTsubo).toFixed(1)}</td></tr>`;
   }).join('');
   if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td><td class="cum">—</td><td class="cum">—</td></tr>`;
   return `<table class="ftab"><caption>${title}　約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
