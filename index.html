@@ -256,6 +256,22 @@
       <h2>平坦度判定（道路レベル基準）</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
       <button id="subAreaToggleBtn" class="small" style="width:100%;margin-top:6px;display:none" onclick="toggleSubAreaVariant()"></button>
+      <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
+        <div class="hint" style="margin:0 0 6px">D/E分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label style="font-size:12px;white-space:nowrap">D区画の割合<input id="deSplitPct" type="text" inputmode="decimal" value="50" style="width:50px;margin-left:4px"></label>%
+          <input id="deSplitSlider" type="range" min="1" max="99" value="50" step="0.5" style="flex:1">
+        </div>
+        <div id="deSplitAreaInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px">D区画 目標面積(坪)<input id="deTargetArea" type="text" inputmode="decimal" placeholder="例 150" style="width:60px"></label>
+          <button class="small" onclick="applyDeTargetArea()">この面積になる%へ</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px">D区画 目標「使える面積」(平+軽造成・坪)<input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150" style="width:60px"></label>
+          <button class="small" onclick="applyDeTargetUsable()">最適基準点込みで%を逆算</button>
+        </div>
+      </div>
       <div class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
         <label>平ら ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
         <label>軽造成 ±cm<input id="fGradeCm" type="text" inputmode="decimal" value="50"></label>
@@ -700,7 +716,10 @@ const SITES = {
                 {no:'D区画 1438.5㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.15,-8.1],[-28,29.13],[-33.64,24.15]]},
                 {no:'E区画 1438.5㎡', pts:[[10.15,-8.1],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53],[-9.87,47.25],[-20.04,36.45],[-21.57,34.81],[-28,29.13]]}
               ]
-            }, subAreaDefault:'ABC', twoSided:false }
+            }, subAreaDefault:'ABC', twoSided:false,
+            // DE案の分割線の向き（A/B境界の実測ベクトル。B/C境界とも実測差0.12°でほぼ同一直線）。
+            // splitSiteByPercent()がこの向きに平行な線で任意の%に敷地を切る（_input/Hirai1298/build_split2.py参照）
+            splitAxis:{ux:0.7155859614, uy:-0.6985246824} }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
@@ -769,12 +788,15 @@ function toggleSubAreaVariant(){
 }
 function updateSubAreaToggleUI(){
   const btn=document.getElementById('subAreaToggleBtn');
+  const panel=document.getElementById('deSplitPanel');
   if(!btn) return;
-  if(!hasSubAreaVariants()){ btn.style.display='none'; return; }
+  if(!hasSubAreaVariants()){ btn.style.display='none'; if(panel) panel.style.display='none'; return; }
   btn.style.display='block';
   const keys=Object.keys(SITE.subAreaSets);
   const other=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
   btn.textContent=`区画割案：${subAreaVariant}（クリックで${other}案に切替）`;
+  // %指定パネルは「DE案（任意%で分割できる案）」を見ている時だけ出す
+  if(panel) panel.style.display=(SITE.splitAxis && subAreaVariant==='DE') ? 'block' : 'none';
 }
 // 調整用の参照地番（周辺筆refShapes＝敷地の外）＋内部分割（現在選択中の区画割案＝敷地の中）。
 // siteAdjustMode中だけ、メイン敷地と同じSITE_XFORMで描画。
@@ -863,6 +885,7 @@ function switchSite(id){
   SITE=SITES[id];
   siteAdj=loadSiteAdj();
   subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
+  if(SITE.splitAxis) applyDeSplitPercent(50);   // DE分割は物件を切り替えるたび50%に戻す
   updateSubAreaToggleUI();
   clearBand();      // 帯・セル・結果をリセット
   clearFlat();      // 平坦度グリッド・結果をリセット
@@ -1239,19 +1262,15 @@ function recomputeFlatOnly(){
   const okCnt=FLAT_GRID.cells.filter(c=>c.elev!=null).length;
   if(prog) prog.textContent=`基準点変更→再計算済み：${okCnt}/${FLAT_GRID.cells.length} 点（取得済みデータを再利用）`;
 }
-// 「平ら＋軽い造成で可（=|標高−基準|≦gradeM）」の面積が最大になる基準標高を、
-// 取得済みグリッド(FLAT_GRID)だけを使って探す（API呼び出しなし・区画A/B/C等の個別事情は考慮しない全体最適）。
-// 原理：各セルの標高eは基準Xが[e-gradeM, e+gradeM]の範囲にある間だけ「使える」に入る。
-// 区間の重なりが最大になるX（区間スタビング）をスイープラインで求める＝O(n log n)。
-function optimizeFlatRef(){
-  if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
-  const {gradeM}=flatThresholds();
-  const cellArea=FLAT_GRID.g*FLAT_GRID.g;
-  const siteCells=FLAT_GRID.cells.filter(c=>c.elev!=null && pointInSite(c.lat,c.lon));
-  if(!siteCells.length){ alert('敷地内に有効な標高データがありません。'); return; }
-  const EPS=1e-6;
+// 「平ら＋軽い造成で可（=|標高−基準|≦gradeM）」の面積が最大になる基準標高を、与えられたセル集合
+// (FLAT_GRID.cellsの部分集合)だけから探す。原理：各セルの標高eは基準Xが[e-gradeM,e+gradeM]の
+// 範囲にある間だけ「使える」に入る。区間の重なりが最大になるX（区間スタビング）を
+// スイープラインで求める＝O(n log n)。optimizeFlatRef()とDE分割の面積逆算の両方から使う正本。
+function bestUsableAreaForCells(cells, gradeM){
+  const cellArea=FLAT_GRID.g*FLAT_GRID.g, EPS=1e-6;
+  if(!cells.length) return {area:0, elev:null};
   const events=[];
-  siteCells.forEach(c=>{ events.push([c.elev-gradeM,+cellArea]); events.push([c.elev+gradeM+EPS,-cellArea]); });
+  cells.forEach(c=>{ events.push([c.elev-gradeM,+cellArea]); events.push([c.elev+gradeM+EPS,-cellArea]); });
   events.sort((a,b)=>a[0]-b[0]);
   let cur=0, best=-1, bestLo=null, bestHi=null;
   for(let i=0;i<events.length;i++){
@@ -1261,7 +1280,17 @@ function optimizeFlatRef(){
       bestHi=(i+1<events.length)?events[i+1][0]:bestLo;   // このピークが続く区間の右端（次のイベントまで）
     }
   }
-  const targetElev=(bestLo+Math.min(bestHi,bestLo+2))/2;   // プラトーの中央付近（境界ぴったりを避け丸め誤差に強くする）
+  const elev=(bestLo+Math.min(bestHi,bestLo+2))/2;   // プラトーの中央付近（境界ぴったりを避け丸め誤差に強くする）
+  return {area:Math.max(0,best), elev};
+}
+// 敷地内(FLAT_GRID.cells)から「平ら＋軽い造成で可」が最大になる基準点を探す（API呼び出しなし・
+// 区画A/B/C等の個別事情は考慮しない全体最適）。実在する標高点の中から目標標高に一番近い点を採用。
+function optimizeFlatRef(){
+  if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  const {gradeM}=flatThresholds();
+  const siteCells=FLAT_GRID.cells.filter(c=>c.elev!=null && pointInSite(c.lat,c.lon));
+  if(!siteCells.length){ alert('敷地内に有効な標高データがありません。'); return; }
+  const {area:best, elev:targetElev}=bestUsableAreaForCells(siteCells, gradeM);
   // 実在する標高点の中から、その目標標高に一番近い点を選ぶ（敷地外の余白＝道路想定エリアも候補に含む）
   let bestCell=null, bestDiff=Infinity;
   FLAT_GRID.cells.forEach(c=>{ if(c.elev==null) return; const d=Math.abs(c.elev-targetElev); if(d<bestDiff){bestDiff=d; bestCell=c;} });
@@ -1272,6 +1301,96 @@ function optimizeFlatRef(){
   const prog=document.getElementById('flatProg');
   const tsubo=x=>(x/3.305785).toFixed(1);
   if(prog) prog.textContent=`自動選択：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(平ら+軽造成) 約${best.toFixed(0)}㎡（${tsubo(best)}坪）が最大`;
+}
+
+/* ====== DE分割案：任意%で分割線を平行にずらす（SITE.splitAxisを持つ物件だけ・平井専用機能） ====== */
+function shoelaceArea(pts){
+  let s=0; for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[(i+1)%pts.length]; s+=a[0]*b[1]-b[0]*a[1];}
+  return Math.abs(s/2);
+}
+// Sutherland-Hodgman：半平面 (p·v <= c) で多角形を切り取る（build_split2.pyのJS移植）
+function clipHalfPlane(poly, v, c){
+  const out=[], n=poly.length;
+  for(let i=0;i<n;i++){
+    const cur=poly[i], nxt=poly[(i+1)%n];
+    const din=cur[0]*v[0]+cur[1]*v[1]-c, dout=nxt[0]*v[0]+nxt[1]*v[1]-c;
+    const curIn=din<=1e-9, nxtIn=dout<=1e-9;
+    if(curIn) out.push(cur);
+    if(curIn!==nxtIn){ const t=din/(din-dout); out.push([cur[0]+(nxt[0]-cur[0])*t, cur[1]+(nxt[1]-cur[1])*t]); }
+  }
+  return out;
+}
+// D区画の面積がちょうど total*pct/100 になる分割線位置を二分探索で求める（半平面クリップ面積は
+// cについて単調非減少なので、多角形が非凸でも常に一意に解ける）
+function splitSiteByPercent(pct){
+  const shape=SITE.shape, ax=SITE.splitAxis;
+  const v=[-ax.uy, ax.ux];   // 分割線の方向(u)に直交する向き＝この方向の位置で線を掃引する
+  const total=shoelaceArea(shape);
+  const target=total*Math.max(0.1,Math.min(99.9,pct))/100;
+  const cvals=shape.map(p=>p[0]*v[0]+p[1]*v[1]);
+  let lo=Math.min(...cvals), hi=Math.max(...cvals);
+  for(let i=0;i<60;i++){ const mid=(lo+hi)/2; const a=shoelaceArea(clipHalfPlane(shape,v,mid)); if(a<target) lo=mid; else hi=mid; }
+  const c=(lo+hi)/2;
+  const D=clipHalfPlane(shape,v,c), E=clipHalfPlane(shape,[-v[0],-v[1]],-c);
+  return {D, E, areaD:shoelaceArea(D), areaE:shoelaceArea(E), total};
+}
+// %を反映：SITE.subAreaSets.DEを再生成し、DE案を見ている最中なら地図・表を即座に更新
+function applyDeSplitPercent(pct){
+  pct=Math.max(0.5,Math.min(99.5, pct));
+  const r=splitSiteByPercent(pct);
+  SITE.subAreaSets.DE=[{no:'D区画', pts:r.D},{no:'E区画', pts:r.E}];
+  const pctEl=document.getElementById('deSplitPct'), sliderEl=document.getElementById('deSplitSlider');
+  if(pctEl) pctEl.value=(+pct.toFixed(1));
+  if(sliderEl) sliderEl.value=pct;
+  const t=x=>(x/3.305785).toFixed(1);
+  const info=document.getElementById('deSplitAreaInfo');
+  if(info) info.textContent=`D 約${r.areaD.toFixed(0)}㎡（${t(r.areaD)}坪）／ E 約${r.areaE.toFixed(0)}㎡（${t(r.areaE)}坪）`;
+  if(subAreaVariant==='DE'){ drawSiteRefs(); if(FLAT_GRID) drawFlat(); }
+  return r;
+}
+// 逆算①：D区画の目標面積(坪)→その面積になる%
+function applyDeTargetArea(){
+  const v=parseFloat(document.getElementById('deTargetArea').value);
+  if(!v || v<=0){ alert('D区画の目標面積(坪)を入力してください。'); return; }
+  const targetM2=v*3.305785, total=shoelaceArea(SITE.shape);
+  if(targetM2>=total){ alert(`敷地全体でも約${(total/3.305785).toFixed(1)}坪しかありません。`); return; }
+  applyDeSplitPercent(targetM2/total*100);
+}
+// 逆算②：「使える面積(平+軽造成)最大化」を前提に、D区画がその目標使える面積になる%と基準点を同時に求める。
+// 原理：Dは%について単調に広がる(入れ子)集合なので、"最適基準点での使える面積"も%について単調非減少
+// →%について二分探索できる。各候補%ごとにbestUsableAreaForCells()でD内の最適基準点を都度計算(入れ子最適化)。
+function applyDeTargetUsable(){
+  if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  const v=parseFloat(document.getElementById('deTargetUsable').value);
+  if(!v || v<=0){ alert('D区画の目標「使える面積」(坪)を入力してください。'); return; }
+  const targetM2=v*3.305785;
+  const {gradeM}=flatThresholds();
+  const usableAt=(pct)=>{
+    const r=splitSiteByPercent(pct);
+    const Dll=shapeToLatLngs(r.D, SITE_XFORM);   // pointInLLPolyは[{lat,lon}]形式（[lat,lon]配列ではない）
+    const cells=FLAT_GRID.cells.filter(c=>c.elev!=null && pointInLLPoly(c.lat,c.lon,Dll));
+    return bestUsableAreaForCells(cells, gradeM);
+  };
+  const at05=usableAt(0.5), at995=usableAt(99.5);
+  if(targetM2>at995.area+1e-6){ alert(`このD/E分割方向では、D区画は最大でも約${(at995.area/3.305785).toFixed(1)}坪までしか「使える面積」を確保できません。`); return; }
+  let pctFinal, result;
+  if(targetM2<=at05.area){ pctFinal=0.5; result=at05; }
+  else{
+    let lo=0.5, hi=99.5;
+    for(let i=0;i<24;i++){ const mid=(lo+hi)/2; if(usableAt(mid).area<targetM2) lo=mid; else hi=mid; }
+    pctFinal=(lo+hi)/2; result=usableAt(pctFinal);
+  }
+  applyDeSplitPercent(pctFinal);
+  // 求まった%・最適基準標高に、実際の基準点(実在する標高点)をセットする
+  let bestCell=null, bestDiff=Infinity;
+  FLAT_GRID.cells.forEach(c=>{ if(c.elev==null||result.elev==null) return; const d=Math.abs(c.elev-result.elev); if(d<bestDiff){bestDiff=d; bestCell=c;} });
+  const prog=document.getElementById('flatProg');
+  if(bestCell){
+    flatRef={lat:bestCell.lat, lon:bestCell.lon, elev:bestCell.elev, hsrc:flatRef?flatRef.hsrc:null};
+    drawFlatRef(); saveFlatRef();
+    recomputeFlatOnly();
+    if(prog) prog.textContent=`D=${pctFinal.toFixed(1)}%・基準標高${bestCell.elev.toFixed(1)}m → D区画の使える面積 約${result.area.toFixed(0)}㎡（${(result.area/3.305785).toFixed(1)}坪）`;
+  }else if(prog){ prog.textContent=`D=${pctFinal.toFixed(1)}%（基準点は据え置き）`; }
 }
 
 async function generateFlat(){
@@ -1673,6 +1792,13 @@ function clearFlat(){
   const elx=document.getElementById(id);
   if(elx) elx.addEventListener('input', ()=>{ if(FLAT_GRID) drawFlat(); updateFlatLegend(); });
 });
+// DE分割：数値欄とスライダーを相互に連動させ、動かすたびに即座に反映（有効面積表もライブ更新）
+(function(){
+  const pctEl=document.getElementById('deSplitPct'), sliderEl=document.getElementById('deSplitSlider');
+  if(!pctEl || !sliderEl) return;
+  sliderEl.addEventListener('input', ()=> applyDeSplitPercent(parseFloat(sliderEl.value)||50));
+  pctEl.addEventListener('input', ()=>{ const v=parseFloat(pctEl.value); if(!isNaN(v)) applyDeSplitPercent(v); });
+})();
 
 /* ====== 断面で指定した崖（高い方=上端） ====== */
 function getCliff(){
@@ -2254,6 +2380,7 @@ populateSiteSel();
 subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
 if(!_shared){ map.setView([siteAdj.lat,siteAdj.lon], map.getZoom()); }
 drawSite();
+if(SITE.splitAxis) applyDeSplitPercent(50);
 updateSubAreaToggleUI();
 flatRef=loadFlatRef();
 drawFlatRef();
