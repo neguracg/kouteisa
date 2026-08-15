@@ -1145,6 +1145,7 @@ async function showStripSection(i){
   }
   if(!st.samples||st.samples.length<3) return;
   SAMPLES=st.samples; picks=[];
+  await detectSectionHsrc(SAMPLES);   // 帯の断面も同じくDEM解像度に合わせて表示を均す（yokoten）
   document.getElementById('section').classList.remove('hidden');
   setTimeout(()=>map.invalidateSize(),60);
   runAuto();   // 崖検出＋断面図（崖周辺にウィンドウ表示）
@@ -2109,10 +2110,63 @@ async function generateSection(){
   await Promise.all(Array.from({length:CONC},run));
   SAMPLES=pts.filter(p=>p.elev!=null);
   gapRatio = pts.length? 1-SAMPLES.length/pts.length : 0;
-  prog.textContent=`${SAMPLES.length}/${pts.length}点（間隔${step}m・全長${total.toFixed(1)}m）`;
+  await detectSectionHsrc(SAMPLES);   // DEMの実解像度（表示の均し幅と注記に使う）
+  const res=demResolutionM(SECTION_HSRC);
+  const over=(res && step<res) ? `／DEM ${SECTION_HSRC}＝${res}m格子なので間隔${step}mは細かすぎ（表示は解像度に合わせて均し・薄線が生値）` : (SECTION_HSRC?`／DEM ${SECTION_HSRC}`:'');
+  prog.textContent=`${SAMPLES.length}/${pts.length}点（間隔${step}m・全長${total.toFixed(1)}m）${over}`;
   runAuto();   // 30度基準線で崖下端・上端・Hを自動判定
 }
 
+/* ====== DEMの実解像度に合わせた表示（断面図のギザギザ＝過剰サンプリング対策） ======
+   国土地理院DEMは①格子が1m/5m/10m ②標高値が0.1m刻みに丸め済み、という二重の離散化がある。
+   これより細かい間隔（例0.5m）で取ると、同じ値が何個も連続して0.1mだけカクッと落ちる
+   「階段＋1点だけの上下動」が必ず出る。地形が本当にギザギザなのではなく、
+   データが持っていない解像度まで拡大して描いているために生じる見た目の artifact。
+   → 計算(SAMPLES)は生値のまま一切いじらず、【表示する線だけ】をDEMの実解像度に合わせて均す。 */
+let SECTION_HSRC=null;   // 現在の断面のDEMデータ源（例 "1m（レーザ）"）
+function demResolutionM(hsrc){
+  if(!hsrc) return null;
+  const m=String(hsrc).match(/(\d+(?:\.\d+)?)\s*m/);
+  return m? parseFloat(m[1]) : null;
+}
+// 断面の代表点1つからDEMデータ源を取得して覚える（1リクエストのみ）
+async function detectSectionHsrc(samples){
+  SECTION_HSRC=null;
+  if(!samples||!samples.length) return;
+  const p=samples[Math.floor(samples.length/2)];
+  try{ const r=await fetch(apiUrl(p.lat,p.lon)); const j=await r.json(); SECTION_HSRC=j.hsrc||null; }catch(e){}
+}
+// 表示用に均した標高列を返す。【エッジ保存】が要点：単純な移動平均だと本物の崖まで丸めてしまう
+// （実測で崖のエッジが最大0.43m鈍った）ので、2段構えにする。
+//   ①メディアンフィルタ：0.1m丸めが生む「1点だけ跳ねる」dither を消す。段差(崖)は数学的に完全保存。
+//   ②適応平均：窓内の高低差が量子化幅(0.1m)程度しかない＝平坦な所だけ、追加で軽く均す。
+//     崖のような本物の起伏がある窓では①の結果をそのまま使う（触らない）。
+function displayElevs(view, hsrc){
+  const n=view.length;
+  if(n<3) return view.map(p=>p.elev);
+  const step=Math.abs(view[n-1].dist-view[0].dist)/(n-1)||0.5;
+  const res=demResolutionM(hsrc);
+  let w = res? Math.round(res/step) : 1;              // DEM1マスに入るサンプル数
+  w=Math.max(1,Math.min(5,w));
+  if(w<=1) return view.map(p=>p.elev);
+  const raw=view.map(p=>p.elev);
+  const half=Math.max(1,Math.floor(w/2));
+  // ① メディアン（段差を保存したままスパイクだけ除去）
+  const med=[];
+  for(let i=0;i<n;i++){
+    const a=[]; for(let j=Math.max(0,i-half); j<=Math.min(n-1,i+half); j++) a.push(raw[j]);
+    a.sort((x,y)=>x-y); med.push(a[Math.floor(a.length/2)]);
+  }
+  // ② 平坦な窓（高低差≦0.15m＝ほぼ量子化ノイズだけ）に限って軽く平均
+  const out=[];
+  for(let i=0;i<n;i++){
+    const lo=Math.max(0,i-half), hi=Math.min(n-1,i+half);
+    let mn=Infinity, mx=-Infinity, s=0, c=0;
+    for(let j=lo;j<=hi;j++){ const v=med[j]; mn=Math.min(mn,v); mx=Math.max(mx,v); s+=v; c++; }
+    out.push((mx-mn)<=0.15 ? s/c : med[i]);
+  }
+  return out;
+}
 // 「全区間を表示」トグル：崖周辺に自動フォーカスした窓 ⇔ 測線の全長。
 // 自動窓は崖下端から2H・敷地までは確実に含むが、そこで終わりとは限らない
 // （その先で谷になって登り返す等）ので、実測の全区間を見比べたい時に使う。
@@ -2155,9 +2209,16 @@ function drawChart(){
   for(let d=Math.ceil(xLo/xstep)*xstep; d<=xHi+1e-6; d+=xstep){const x=X(d);
     add('line',{x1:x,y1:mt,x2:x,y2:H-mb,stroke:'#223141','stroke-width':1});
     add('text',{x:x,y:H-mb+16,'text-anchor':'middle'},d.toFixed(0));}
-  let dA=`M ${X(view[0].dist)} ${H-mb} `; view.forEach(p=>dA+=`L ${X(p.dist)} ${Y(p.elev)} `); dA+=`L ${X(view[view.length-1].dist)} ${H-mb} Z`;
+  // 表示用の標高（DEMの実解像度に合わせて均す。生値SAMPLESは計算用に一切変更しない）
+  const dispE=displayElevs(view, SECTION_HSRC);
+  const isSmoothed=dispE.some((e,i)=>Math.abs(e-view[i].elev)>1e-9);
+  let dA=`M ${X(view[0].dist)} ${H-mb} `; view.forEach((p,i)=>dA+=`L ${X(p.dist)} ${Y(dispE[i])} `); dA+=`L ${X(view[view.length-1].dist)} ${H-mb} Z`;
   add('path',{d:dA,fill:'rgba(63,167,255,.15)'});
-  add('path',{d:'M '+view.map(p=>`${X(p.dist)} ${Y(p.elev)}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':2});
+  // 均した場合は生データ（0.1m刻みの階段）も薄く重ねる＝隠さずに両方見せる
+  if(isSmoothed){
+    add('path',{d:'M '+view.map(p=>`${X(p.dist)} ${Y(p.elev)}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':1,opacity:0.28});
+  }
+  add('path',{d:'M '+view.map((p,i)=>`${X(p.dist)} ${Y(dispE[i])}`).join(' L '),fill:'none',stroke:'#3fa7ff','stroke-width':2});
   add('text',{x:(ml+W-mr)/2,y:H-3,'text-anchor':'middle'},'水平距離 (m)  左=崖上側 / 右=崖下側');
   add('text',{x:13,y:H/2,'text-anchor':'middle',transform:`rotate(-90 13 ${H/2})`},'標高 (m)');
   // 断面図 始点／終点。表示窓が測線の全長より狭い時は「始点」「終点」と誤認させない
@@ -2248,7 +2309,8 @@ function drawPicks(){
     const tanA=Math.tan(rad(parseFloat(document.getElementById('pAng').value)||30));
     const zEnd=lo.elev+tanA*Math.abs(hiP.dist-lo.dist);
     add('line',{x1:SCAL.X(lo.dist),y1:SCAL.Y(lo.elev),x2:SCAL.X(hiP.dist),y2:SCAL.Y(zEnd),stroke:'#ffffff','stroke-width':1.5,'stroke-dasharray':'6,4'});
-    add('text',{x:SCAL.W-SCAL.mr-4,y:SCAL.H-SCAL.mb-6,'text-anchor':'end',fill:'#cfd8e3','font-size':'11'},'白破線=30°基準線');
+    add('text',{x:SCAL.W-SCAL.mr-4,y:SCAL.H-SCAL.mb-6,'text-anchor':'end',fill:'#cfd8e3','font-size':'11'},
+      '白破線=30°基準線'+(demResolutionM(SECTION_HSRC)? '／薄い青線=DEM生値(0.1m刻みの階段)':''));
     // === 2H影響ラインを断面図にも表示（崖下端から敷地＝要対策方向へ水平2H）===
     const mul=parseFloat(document.getElementById('pMul').value)||2;
     const H=Math.abs(a.elev-b.elev), twoH=mul*H;
