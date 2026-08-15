@@ -168,3 +168,32 @@
   コンソールエラーなし。
 
 ヨコテン:済1件（pointInLLPolyの引数形式ミスはこの1箇所のみ、他の呼び出し箇所は全て正しい形式で確認）
+
+## 2026-08-15 平井DE分割: E区画を主役に変更＋ライン移動のたびにE専用の最適基準点をライブ反映
+- 要望: 買うならE区画なので主役をD→Eに。さらに「線を引く場所によって最適な基準点が変わる」ことを
+  踏まえ、スライダーでラインを動かすたびに、その位置でのE区画だけの最適基準点(使える面積最大化)を
+  動的に反映してほしい。
+- kaishu-policy着手前4問: ①同じ知識(区間スタビングによる最適基準点探索)はbestUsableAreaForCells()
+  (前回セッションでoptimizeFlatRef/applyDeTargetUsable向けに抽出済み)の1箇所のみ。今回はこれを
+  「特定の区画ポリゴンに対して最適点を返す」bestRefForRegion()にもう一段ラップして共通化。
+  ②同種の既存機能: 直前のapplyDeTargetUsable()が「%を動かしてE内の最適点を探す」ロジックの
+  雛形そのもの。前提(pointInLLPolyは[{lat,lon}]形式)は前回のバグ修正で確認済みのため踏襲。
+  ③引っ越しではない。④ eb90c20(DE分割%指定機能)を確認、その場で作った直後の追加調整。
+- 実装: splitSiteByPercent(pctD)の内部表現(D%)はそのまま維持し、UIの主役をE%に変更
+  （呼び出し側でpctD=100-pctEに変換。関数のcontractを変えず影響範囲を局所化）。
+  bestRefForRegion(regionPts,gradeM)を新設し、bestUsableAreaForCells()と「実在点への丸め」を
+  1箇所に統合。applyDeSplitPercent(pctE)は呼ばれるたびに①E区画ポリゴンを再生成
+  ②bestRefForRegion()でE区画専用の最適基準点を探索③flatRefを実際に更新④recomputeFlatOnly()で
+  地図の色分け・赤い基準ライン・区画別表まで全部再描画、を一括で行う。表の並びもE区画を先頭に。
+  optimizeFlatRef()（敷地全体版）もbestRefForRegion(SITE.shape,...)を使うよう統合し重複を解消
+  (shapeToLatLngs(SITE.shape,SITE_XFORM)はsiteLatLngsと同一である性質を利用)。
+  スライダードラッグはE最適化+全体再描画が毎回走るためrequestAnimationFrameで間引き。
+- 検証: 50%対称(D=E=1438.5㎡)は不変。E=30%指定→区画別表がE先頭で表示、prog「E=30.0%→基準標高
+  22.0m でE区画の使える面積約344㎡(104.1坪)」、独立再検算で完全一致(104.1坪)。E目標面積150坪→
+  17.2%(理論値と一致)。E目標使える面積150坪→E=39.0%・基準標高21.8mが自動決定され実測148.5坪と
+  一致。optimizeFlatRef()のリファクタ後も従来と完全同一の結果(基準標高21.6m・1499㎡・453.3坪)。
+  物件切替でE%は50・ABCへリセット、mikokaiはパネル非表示、函南は無回帰。コンソールエラーなし。
+
+ヨコテン:済1件（区間スタビング最適化ロジックがbestUsableAreaForCells/旧optimizeFlatRef/
+旧applyDeTargetUsableの3箇所に分散する兆しがあったため、bestRefForRegion()に一本化して
+全呼び出し元をそこへ寄せた）
