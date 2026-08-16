@@ -192,6 +192,7 @@
     <div class="card edit-only tool-cliff">
       <h2>1. 測線の点を地図でクリック配置</h2>
       <div class="modes" id="modes"></div>
+      <div id="cliffPointHint" class="note" style="margin-top:8px"></div>
       <div class="hint">「始点(上側)」を崖の上の少し奥、「終点(下側)」を崖下の少し先に置き、崖をまたぐ線を引きます。<br>
         崖上端・崖下端は断面図から自動判定するので、ここは大まかでOK。点はドラッグで微調整可。<br>
         背景は右下のレイヤーで <b>陰影起伏図</b>・<b>色別標高図</b> に切替えると崖が見やすいです。</div>
@@ -258,7 +259,13 @@
       <h2>平坦度判定（道路レベル基準）</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
       <div id="flatComputeBlock" style="margin-top:8px;padding:10px;background:#0f1720;border-radius:8px;border:1px solid #2a3542">
-        <button id="flatComputeBtn" class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button>
+        <div class="params" style="grid-template-columns:1fr 1fr">
+          <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="1" oninput="updateFlatComputeBtnState()"></label>
+          <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
+        </div>
+        <button id="flatComputeBtn" class="primary" style="width:100%;margin-top:8px" onclick="generateFlat()">平坦度を計算</button>
+        <select id="optimizeRegionSel" style="width:100%;margin-top:8px;display:none;padding:3px"></select>
+        <button class="small" style="width:100%;margin-top:6px" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button>
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
           <button class="small" onclick="clearFlat()">クリア</button>
           <span id="flatProg" class="muted" style="font-size:11px"></span>
@@ -314,13 +321,7 @@
         <label>要造成 ±cm<input id="fSteepCm" type="text" inputmode="decimal" value="80"></label>
       </div>
       <div id="cutfillNote" class="hint" style="margin-top:8px">切土/盛土とも共通の段階：0〜30cm地ならし／30〜50cm土工／50〜100cm小型擁壁級／100cm超は造成（グラデーション）。</div>
-      <div class="params" style="grid-template-columns:1fr 1fr;margin-top:8px">
-        <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="1" oninput="updateFlatComputeBtnState()"></label>
-        <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
-      </div>
       <div id="legacyHint" class="hint" style="display:none">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
-      <select id="optimizeRegionSel" style="width:100%;margin-top:8px;display:none;padding:3px"></select>
-      <div style="margin-top:6px"><button class="small" style="width:100%" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button></div>
       <div class="note" id="flatResult" style="margin-top:8px;display:none"></div>
     </div>
 
@@ -410,9 +411,13 @@ const COL = { start:"#19c37d", end:"#e879f9", top:"#ffb020", bottom:"#38bdf8", s
 
 /* ====== 測線の点 ====== */
 const POINTS = {
-  top:   {name:"断面図 始点(上側)", color:COL.start, lat:35.0931148, lon:138.9555981, elev:null},
-  bottom:{name:"断面図 終点(下側)", color:COL.end,   lat:35.0935590, lon:138.9552146, elev:null},
+  top:   {name:"断面図 始点(上側)", color:COL.start, lat:35.0931148, lon:138.9555981, elev:null, placed:true},
+  bottom:{name:"断面図 終点(下側)", color:COL.end,   lat:35.0935590, lon:138.9552146, elev:null, placed:true},
 };
+// placed:true＝手で置いた/ドラッグした実座標。falseは「まだクリックされていない仮の位置」で、
+// drawMeasure()が薄く描き、cliffPointHintが「クリックして置いてください」と促す対象になる。
+// hannanの初期座標は最初から作図済みなのでplaced:true、switchSite()でresetCliffPoints()を呼ぶ
+// 他物件はplaced:falseへ戻す。
 let mode = "top";
 let TOOL = 'cliff';     // 'cliff'（がけ判定） | 'flat'（平坦度判定）
 let VIEW = false;       // 共有リンクの閲覧モード
@@ -534,6 +539,27 @@ document.addEventListener('keydown', e=>{
 });
 
 /* ====== ツール切替（がけ判定／平坦度） ====== */
+// 物件切替のたびに測線の点を新しい敷地の近くへ戻す。POINTS.top/bottomは物件ごとに保存されておらず
+// 従来は切替前の座標がそのまま残っていた＝別物件の遠く離れた位置に「固定」されたように見えるバグの原因。
+// 敷地中心から南北に25mずつ離した仮位置に置き直し、placed:falseにしてcliffPointHintの案内対象に戻す。
+function resetCliffPoints(){
+  const c={lat:siteAdj.lat, lon:siteAdj.lon};
+  const p1=destination(c, 0, 25), p2=destination(c, Math.PI, 25);
+  POINTS.top.lat=p1.lat; POINTS.top.lon=p1.lon; POINTS.top.elev=null; POINTS.top.placed=false;
+  POINTS.bottom.lat=p2.lat; POINTS.bottom.lon=p2.lon; POINTS.bottom.elev=null; POINTS.bottom.placed=false;
+  mode='top';
+  if(typeof modesEl!=='undefined' && modesEl) [...modesEl.children].forEach(c2=>c2.classList.toggle('active',c2.dataset.k==='top'));
+  ['top','bottom'].forEach(k=>{
+    const latEl=document.getElementById(k+'_lat'), lonEl=document.getElementById(k+'_lon'),
+          elevEl=document.getElementById(k+'_elev'), apiEl=document.getElementById(k+'_api');
+    if(latEl) latEl.value=POINTS[k].lat;
+    if(lonEl) lonEl.value=POINTS[k].lon;
+    if(elevEl) elevEl.value='';
+    if(apiEl) apiEl.href=apiUrl(POINTS[k].lat,POINTS[k].lon);
+  });
+  drawMeasure();
+  updateCliffPointHint();
+}
 function setTool(t){
   TOOL=t;
   document.getElementById('tabCliff').classList.toggle('primary', t==='cliff');
@@ -568,9 +594,22 @@ MODEDEF.forEach(([k,color,name])=>{
   b.onclick=()=>{
     mode=k;
     [...modesEl.children].forEach(c=>c.classList.toggle('active',c.dataset.k===k));
+    updateCliffPointHint();
   };
   modesEl.appendChild(b);
 });
+// 「今どちらの点をクリックすべきか」を案内する動的ヒント。両方置き終わるまでmodeに連動して案内文を出す。
+function updateCliffPointHint(){
+  const el=document.getElementById('cliffPointHint');
+  if(!el) return;
+  if(POINTS.top.placed && POINTS.bottom.placed){
+    el.innerHTML='✅ 両方の点を置きました。ズレていればドラッグで微調整→「2. 断面図を作成」へ進んでください。';
+    return;
+  }
+  const cur=POINTS[mode];
+  const label = mode==='top' ? '崖上端（始点）' : '崖下端（終点）';
+  el.innerHTML=`📍 地図をクリックして<b style="color:${cur.color}">${label}</b>を置いてください（あとでドラッグして動かせます）`;
+}
 
 /* ====== 各点の入力UI ====== */
 const pointsEl=document.getElementById('points');
@@ -592,6 +631,7 @@ Object.entries(POINTS).forEach(([k,p])=>{
     </div>`;
   pointsEl.appendChild(div);
 });
+updateCliffPointHint();   // 初期表示時点の案内文をセット（hannanは最初からplaced:trueなので「両方置きました」表示になる）
 
 /* ====== 共通 ====== */
 const rad=x=>x*Math.PI/180, deg=x=>x*180/Math.PI;
@@ -644,7 +684,16 @@ function setPoint(k,lat,lon,doFetch){
   document.getElementById(k+'_lat').value=p.lat;
   document.getElementById(k+'_lon').value=p.lon;
   document.getElementById(k+'_api').href=apiUrl(p.lat,p.lon);
-  if(doFetch) fetchElev(k); else recompute();
+  if(doFetch){
+    p.placed=true;   // クリック/ドラッグ/座標反映＝ユーザーが実際に置いた操作
+    const other=(k==='top')?'bottom':'top';
+    if(!POINTS[other].placed){   // もう片方がまだなら、次はそちらを置く番だと自動で案内を進める
+      mode=other;
+      if(typeof modesEl!=='undefined' && modesEl) [...modesEl.children].forEach(c=>c.classList.toggle('active',c.dataset.k===other));
+    }
+    fetchElev(k);
+  } else recompute();
+  updateCliffPointHint();
 }
 function applyManual(k){
   const lat=parseFloat(document.getElementById(k+'_lat').value);
@@ -697,11 +746,13 @@ function drawMeasure(){
   measureLayer.clearLayers();
   if(VIEW||BAND_DONE) return;   // 閲覧モード・影響帯描画後は測線を出さない
   const t=POINTS.top,b=POINTS.bottom;
-  L.polyline([[t.lat,t.lon],[b.lat,b.lon]],{color:'#9fb0c0',weight:2,dashArray:'6,5',opacity:.9}).addTo(measureLayer);
+  const bothPlaced=t.placed&&b.placed;
+  // 未配置(仮の位置)の間は線・点を薄く描き、「まだ実際には置いていない」ことを視覚的に示す
+  L.polyline([[t.lat,t.lon],[b.lat,b.lon]],{color:'#9fb0c0',weight:2,dashArray:'6,5',opacity:bothPlaced?.9:.32}).addTo(measureLayer);
   makeDot(measureLayer,[t.lat,t.lon],t.color,true,ll=>setPoint('top',ll.lat,ll.lng,true));
   makeDot(measureLayer,[b.lat,b.lon],b.color,true,ll=>setPoint('bottom',ll.lat,ll.lng,true));
-  makeLabel(measureLayer,L.latLng(t.lat,t.lon),('断面図始点'+(t.elev!=null?` ${t.elev}m`:'')),t.color,true);
-  makeLabel(measureLayer,L.latLng(b.lat,b.lon),('断面図終点'+(b.elev!=null?` ${b.elev}m`:'')),b.color,true);
+  makeLabel(measureLayer,L.latLng(t.lat,t.lon),((t.placed?'':'（未配置）')+'断面図始点'+(t.elev!=null?` ${t.elev}m`:'')),t.color,true);
+  makeLabel(measureLayer,L.latLng(b.lat,b.lon),((b.placed?'':'（未配置）')+'断面図終点'+(b.elev!=null?` ${b.elev}m`:'')),b.color,true);
 }
 
 /* ====== 敷地（区画）＝固定配置 ======
@@ -1069,11 +1120,17 @@ function switchSite(id){
   try{ localStorage.setItem('kouteisa_current_site',id); }catch(e){}
   SITE=SITES[id];
   siteAdj=loadSiteAdj();
+  resetCliffPoints();   // 測線の点を新しい敷地の近くへ戻す（前物件の座標が残る問題の修正）
   subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
   if(SITE.splitAxis) applyDeSplitPercent(50);   // DE分割は物件を切り替えるたび50%に戻す
   updateSubAreaToggleUI();
   clearBand();      // 帯・セル・結果をリセット
   clearFlat();      // 平坦度グリッド・結果をリセット
+  // 断面図の選択点(picks)・サンプル(SAMPLES)・確定済み崖線(confirmedCliffs)も物件ごとの状態。
+  // clearBand()はこれらを触っておらず、POINTS同様に前物件のデータが残ったまま次の物件に持ち越されて
+  // いた（ヨコテン：同じ「switchSite()がリセットし忘れる」機構での別インスタンス。2026-08-17発見）。
+  picks=[]; SAMPLES=[]; clearConfirmed();
+  if(!document.getElementById('section').classList.contains('hidden')){ drawChart(); updateReadout(); }
   flatRefLayer.clearLayers();
   flatRef=loadFlatRef();   // 新物件の基準点を復元（無ければnull）
   drawFlatRef();
