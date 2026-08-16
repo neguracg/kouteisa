@@ -289,9 +289,9 @@
       </div>
       <div id="priceSimPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
         <div style="font-weight:700;color:#e6edf3;margin-bottom:6px">価格シミュレーション</div>
-        <div class="hint" style="margin:0 0 6px">基準価格を、区画ごとの<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく、単純な比例配分の目安）。</div>
+        <div class="hint" style="margin:0 0 6px"><b>A区画</b>だけが分かっている価格を基準に、他区画（B/C、DEモード時はD/Eも）を<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく単純な比例配分の目安）。この価格を値引きすると全区画の試算額が連動して変わります。</div>
         <div style="display:grid;grid-template-columns:auto 70px auto;gap:6px 6px;align-items:center;font-size:12px">
-          <span>基準価格</span><input id="priceSimBase" type="text" inputmode="decimal" value="1298" oninput="priceSimBaseChanged()">万円
+          <span>A区画 現在価格</span><input id="priceSimBase" type="text" inputmode="decimal" value="1298" oninput="priceSimBaseChanged()">万円
           <span>値引き</span><input id="priceSimDiscountPct" type="text" inputmode="decimal" value="0" oninput="priceSimSyncFromPct()">%
           <span>値引後金額</span><input id="priceSimDiscountPrice" type="text" inputmode="decimal" placeholder="任意入力" oninput="priceSimSyncFromPrice()">万円
         </div>
@@ -766,7 +766,11 @@ const SITES = {
             }, subAreaDefault:'ABC', twoSided:false,
             // DE案の分割線の向き（A/B境界の実測ベクトル。B/C境界とも実測差0.12°でほぼ同一直線）。
             // splitSiteByPercent()がこの向きに平行な線で任意の%に敷地を切る（_input/Hirai1298/build_split2.py参照）
-            splitAxis:{ux:0.7155859614, uy:-0.6985246824} }
+            splitAxis:{ux:0.7155859614, uy:-0.6985246824},
+            // 標高グリッドの事前キャッシュ（_input/Hirai1298/fetch_elev_cache.py で一度だけオフライン取得）。
+            // g・adjが一致する時だけgenerateFlat()がこれを使い、毎回のライブAPI取得を省略する
+            // （不一致・取得失敗時は既存のライブfetchOne()ループへ自動フォールバック。他物件は対象外）。
+            elevCache:{url:'data/hirai_elev_g1.json', g:1, adj:{lat:35.0939428, lon:138.9677039, rot:0, scale:1}} }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
@@ -869,13 +873,18 @@ function priceSimEffPrice(){
   const pct=parseFloat(document.getElementById('priceSimDiscountPct').value)||0;
   return base*(1-pct/100);
 }
+// 基準区画＝A区画（唯一「実際の価格が分かっている」区画。それ以外は全部Aからの比例配分で導出する）
+function priceSimBaseRegion(){
+  const abc=(SITE.subAreaSets && SITE.subAreaSets.ABC) || [];
+  return abc.find(s=>s.no.split(/\s+/)[0]==='A区画') || abc[0] || null;
+}
+// 内訳テーブルの行＝区画割案ボタンに連動：ABC表示中はA/B/Cだけ、DE表示中はA/B/C/D/E全部
+// （「どのブロックが何か分かりづらい」への対応。DEはABCと別物ではなく同じ敷地の切り口違いなので両方並べて比較する）
 function priceSimRegionList(){
-  // 敷地全体＋ABC/DE両案の区画を常に列挙（今どちらを表示中かに関わらず「全区画」を比較したいという要望のため）
-  const regions=[{no:'敷地全体', pts:SITE.shape}];
-  if(SITE.subAreaSets) Object.keys(SITE.subAreaSets).forEach(k=>{
-    (SITE.subAreaSets[k]||[]).forEach(s=>regions.push(s));
-  });
-  return regions;
+  const abc=(SITE.subAreaSets && SITE.subAreaSets.ABC) || [];
+  const list=[...abc];
+  if(subAreaVariant==='DE' && SITE.subAreaSets && SITE.subAreaSets.DE) list.push(...SITE.subAreaSets.DE);
+  return list;
 }
 function priceSimUsableArea(pts, thM){
   if(!FLAT_GRID || !SITE_XFORM) return null;
@@ -889,32 +898,43 @@ function priceSimUsableArea(pts, thM){
   });
   return s;
 }
+// 区画行1本のHTML。基準区画(A)は色付きで区別し「(基準)」を明記する
+function priceSimRowHTML(name, baseName, area, tsuboText, price, f, t, y){
+  const isBase=(name===baseName);
+  return `<tr${isBase?' style="background:#16241b"':''}><td class="l">${name}${isBase?' <span style="color:#8bc34a;font-size:10px">(基準)</span>':''}</td>`+
+    `<td>${f(area)}</td><td>${t(area)}</td><td>${y(price)}</td></tr>`;
+}
 function renderPriceSim(){
   const el=document.getElementById('priceSimResult');
   if(!el || !hasSubAreaVariants()) return;
+  const base=priceSimBaseRegion();
+  if(!base){ el.innerHTML='<div class="hint">基準区画（A区画）が見つかりません。</div>'; return; }
   const effPrice=priceSimEffPrice();
   const discountPct=parseFloat(document.getElementById('priceSimDiscountPct').value)||0;
   const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1), y=x=>x.toFixed(1);
+  const baseName=base.no.split(/\s+/)[0];
+  const baseArea=shoelaceArea(base.pts);
   const regions=priceSimRegionList();
   const totalArea=shoelaceArea(SITE.shape);
-  const rows1=regions.map(r=>{
-    const a=shoelaceArea(r.pts);
-    const price=totalArea>0 ? effPrice*a/totalArea : 0;
-    return `<tr><td class="l">${r.no.split(/\s+/)[0]}</td><td>${f(a)}</td><td>${t(a)}</td><td>${y(price)}</td></tr>`;
-  }).join('');
-  let html=`<div class="muted" style="font-size:11px;margin-bottom:6px">実効基準価格 ${y(effPrice)}万円${discountPct?`（${discountPct}%引き）`:''}</div>`
-    + `<table class="ftab"><caption>面積比の試算</caption><tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows1}</table>`;
+
+  const unit1=baseArea>0 ? effPrice/baseArea : 0;   // 万円/㎡（面積比）
+  const rows1=regions.map(r=>priceSimRowHTML(r.no.split(/\s+/)[0], baseName, shoelaceArea(r.pts), t, unit1*shoelaceArea(r.pts), f, t, y)).join('');
+  let html=`<div class="muted" style="font-size:11px;margin-bottom:6px">基準区画：${baseName}（約${f(baseArea)}㎡・${t(baseArea)}坪）　実効価格 ${y(effPrice)}万円${discountPct?`（${discountPct}%引き）`:''}　単価 ${unit1.toFixed(3)}万円/㎡</div>`;
+  html+=`<div style="font-weight:700;color:#e6edf3;margin:4px 0 2px">面積比の試算</div>`
+    + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalArea)}㎡（${t(totalArea)}坪）　→　<b>${y(unit1*totalArea)}万円</b></div>`
+    + `<table class="ftab"><tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows1}</table>`;
+
   if(!FLAT_GRID){
     html+=`<div class="hint" style="margin-top:6px">先に「平坦度を計算」を実行すると、使える面積比の試算も出せます。</div>`;
   } else {
     const thM=(parseFloat(document.getElementById('priceSimThreshold').value)||50)/100;
+    const baseUsable=priceSimUsableArea(base.pts, thM)||0;
+    const unit2=baseUsable>0 ? effPrice/baseUsable : 0;
     const totalUsable=priceSimUsableArea(SITE.shape, thM)||0;
-    const rows2=regions.map(r=>{
-      const u=priceSimUsableArea(r.pts, thM)||0;
-      const price=totalUsable>0 ? effPrice*u/totalUsable : 0;
-      return `<tr><td class="l">${r.no.split(/\s+/)[0]}</td><td>${f(u)}</td><td>${t(u)}</td><td>${y(price)}</td></tr>`;
-    }).join('');
-    html+=`<table class="ftab" style="margin-top:6px"><caption>使える面積比(±${(thM*100).toFixed(0)}cm)の試算</caption><tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
+    const rows2=regions.map(r=>{ const u=priceSimUsableArea(r.pts, thM)||0; return priceSimRowHTML(r.no.split(/\s+/)[0], baseName, u, t, unit2*u, f, t, y); }).join('');
+    html+=`<div style="font-weight:700;color:#e6edf3;margin:8px 0 2px">使える面積比(±${(thM*100).toFixed(0)}cm)の試算</div>`
+      + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalUsable)}㎡（${t(totalUsable)}坪）　→　<b>${y(unit2*totalUsable)}万円</b></div>`
+      + `<table class="ftab">${baseUsable>0?'':'<caption style="color:#e07a4a">基準区画(A)の使える面積が0のため試算できません</caption>'}<tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
   }
   el.innerHTML=html;
 }
@@ -1592,6 +1612,34 @@ async function generateFlat(){
   const nMin=Math.min(...sEN.map(p=>p.n))-margin, nMax=Math.max(...sEN.map(p=>p.n))+margin;
   const prog=document.getElementById('flatProg');
   let cols=Math.floor((eMax-eMin)/g)+1, rows=Math.floor((nMax-nMin)/g)+1;
+  // 事前キャッシュ優先読み込み（SITE.elevCacheを持つ物件＝今は平井のみ対象）。
+  // 格子間隔・敷地配置(siteAdj)がキャッシュ生成時と一致する場合だけ使い、ライブ取得ループを丸ごとスキップする。
+  // 取得失敗・不一致（他物件・キャッシュ未整備・調整済みの平井 等）は何もせず下の通常ルートへ素通りする
+  // （＝既存のライブ取得ロジックには一切手を加えていない。回帰リスクゼロを最優先）。
+  const ec=SITE.elevCache;
+  if(ec && g===ec.g &&
+     Math.abs(siteAdj.lat-ec.adj.lat)<1e-9 && Math.abs(siteAdj.lon-ec.adj.lon)<1e-9 &&
+     Math.abs(siteAdj.rot-ec.adj.rot)<1e-9 && Math.abs(siteAdj.scale-ec.adj.scale)<1e-9){
+    try{
+      const r=await fetch(ec.url);
+      if(!r.ok) throw new Error('cache http '+r.status);
+      const j=await r.json();
+      if(j && Array.isArray(j.cells) && j.cols===cols && j.rows===rows &&
+         Math.abs(j.eMin-eMin)<1e-6 && Math.abs(j.nMin-nMin)<1e-6){
+        const cells=j.cells.map(c=>({e:c.e, n:c.n, lat:c.lat, lon:c.lon, elev:c.elev,
+                                      dh:(c.elev!=null)?(c.elev-flatRef.elev):null}));
+        FLAT_GRID={g,cols,rows,en0:{e:eMin,n:nMin},cLat,cLon,cells};
+        FLAT_GRID_SIG=sig;
+        const okCnt=cells.filter(c=>c.elev!=null).length;
+        if(prog) prog.textContent=`キャッシュ済み標高データを使用（API取得なし）：${okCnt}/${cells.length} 点`;
+        drawFlat();
+        return;
+      }
+      // cols/rows/eMin/nMinが不一致＝キャッシュが今の配置と噛み合っていない → 下のライブ取得へフォールバック
+    }catch(e){
+      // 取得失敗（404・ネットワークエラー・JSON不正等）→ 下のライブ取得へフォールバック
+    }
+  }
   // 3000点を超える広い敷地は、指定間隔のまま取るか自動で粗くするかを選べる（帯生成の確認ダイアログと同じ流儀）
   if(cols*rows>3000 &&
      !confirm(`指定の格子間隔${gInput}mだと約${cols*rows}点の標高取得になります（数分かかる場合があります）。\n\nOK＝そのまま${gInput}mで取得（精度優先）\nキャンセル＝間隔を自動で粗くして短時間で取得`)){
