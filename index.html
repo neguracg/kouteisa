@@ -257,6 +257,13 @@
     <div class="card tool-flat edit-only">
       <h2>平坦度判定（道路レベル基準）</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
+      <div id="flatComputeBlock" style="margin-top:8px;padding:10px;background:#0f1720;border-radius:8px;border:1px solid #2a3542">
+        <button id="flatComputeBtn" class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+          <button class="small" onclick="clearFlat()">クリア</button>
+          <span id="flatProg" class="muted" style="font-size:11px"></span>
+        </div>
+      </div>
       <button id="subAreaToggleBtn" style="width:100%;margin-top:8px;padding:10px;display:none;text-align:left;border-color:#3b82f6" onclick="toggleSubAreaVariant()"></button>
       <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px;transition:opacity .15s">
         <div style="font-weight:700;color:#e6edf3;margin-bottom:4px">D/E 敷地分割</div>
@@ -308,17 +315,12 @@
       </div>
       <div id="cutfillNote" class="hint" style="margin-top:8px">切土/盛土とも共通の段階：0〜30cm地ならし／30〜50cm土工／50〜100cm小型擁壁級／100cm超は造成（グラデーション）。</div>
       <div class="params" style="grid-template-columns:1fr 1fr;margin-top:8px">
-        <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="1"></label>
+        <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="1" oninput="updateFlatComputeBtnState()"></label>
         <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
       </div>
       <div id="legacyHint" class="hint" style="display:none">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
-      <div style="margin-top:4px"><button class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button></div>
-      <select id="optimizeRegionSel" style="width:100%;margin-top:6px;display:none;padding:3px"></select>
+      <select id="optimizeRegionSel" style="width:100%;margin-top:8px;display:none;padding:3px"></select>
       <div style="margin-top:6px"><button class="small" style="width:100%" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button></div>
-      <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
-        <button class="small" onclick="clearFlat()">クリア</button>
-        <span id="flatProg" class="muted" style="font-size:11px"></span>
-      </div>
       <div class="note" id="flatResult" style="margin-top:8px;display:none"></div>
     </div>
 
@@ -1785,6 +1787,7 @@ function drawFlat(){
   const areas=computeFlatAreas();   // スキームに応じた表を描画（ディスパッチャ）
   if(FLAT_SCHEME==='legacy') drawFlatOutlines(areas); else drawCutFillOutlines();
   renderPriceSim();   // 使える面積比の試算は基準点変更のたびに追従
+  updateFlatComputeBtnState();
 }
 
 /* 素朴なmarching squares：格子セル4隅の値とレベルの符号からエッジ交点を求めて線分化 */
@@ -2186,6 +2189,20 @@ function clearFlat(){
   FLAT_GRID_SIG=null;
   const el=document.getElementById('flatResult'); if(el){el.style.display='none';el.innerHTML='';}
   const prog=document.getElementById('flatProg'); if(prog) prog.textContent='';
+  updateFlatComputeBtnState();
+}
+// 「平坦度を計算」ボタンの活性/グレーアウト。今の設定(#fGrid等)で取得済みの格子がそのまま使える時は
+// 押す必要が無い（基準点を変えてもmoveFlatRef()が自動でrecomputeFlatOnly()する＝計算ボタンは不要）ので
+// グレーアウトして「もう押さなくていい」ことを示す。格子間隔を変える・物件を切り替える等で
+// signatureが変わった瞬間、元の色に戻って再び押せる状態になる。
+function updateFlatComputeBtnState(){
+  const btn=document.getElementById('flatComputeBtn');
+  if(!btn) return;
+  const ready = !!(FLAT_GRID && FLAT_GRID_SIG===flatGridSig());
+  btn.disabled = ready;
+  btn.style.opacity = ready ? '0.4' : '1';
+  btn.style.cursor = ready ? 'default' : 'pointer';
+  btn.textContent = ready ? '平坦度を計算　（取得済み・基準点の変更は自動反映されます）' : '平坦度を計算';
 }
 ['fFlatCm','fGradeCm','fSteepCm','fContour'].forEach(id=>{
   const elx=document.getElementById(id);
