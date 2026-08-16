@@ -418,3 +418,56 @@ applyDeSplitPercent/applyDeTargetUsable)は全て同じヘルパーを通すよ�
   見せて、按分計算が破綻していないことを視覚的に示したい、という意図。renderPriceSim()の
   rows1/rows2生成ループ（priceSimRowHTML呼び出し部分）に小計行を挿入する形で対応する想定。
   index.html内 `function renderPriceSim()` 付近（1930行台）を参照。
+
+## 2026-08-17 平井：標高グリッドの事前キャッシュ化（docs/task_hirai_elev_cache.md 完了）
+- 背景: 平井（SITES.hirai）は「平坦度を計算」のたびに1m格子で約7,900点を国土地理院 標高APIへ
+  毎回ライブ取得しており非効率（他物件より敷地が広く点数が多い）。指示書に従い、平井だけを対象に
+  一度きりオフライン取得→JSONキャッシュ化し、以後は読むだけにした（他物件は対象外・現状のライブ
+  取得のまま変更なし）。
+- `_input/Hirai1298/fetch_elev_cache.py`（標準ライブラリのみ、urllib使用）を新規作成。index.htmlの
+  buildSite()→generateFlat()冒頭の格子生成ロジックを1行1行対応させてPythonで再現
+  （cx,cy=頂点の単純平均、a0=shoelace、s/cr/sr/mLat/mLon→siteLatLngs→cLat/cLon→eMin/nMin→
+  cols/rows→各セルlat/lon）。ブラウザ実機でbuildSite()/generateFlat()相当のJSを直接実行し、
+  cLat/cLon/eMin/nMin/cols/rows・四隅+中央のセルlat/lonをPython側の出力と突き合わせ、完全一致
+  （またはnm単位の誤差＝cos()の最終ビット差のみ、実用上ゼロ）を確認済み。
+- 実行結果: cols=78,rows=101→7878点、並列数6・最大2回リトライで取得、**欠測0点**。
+  data/hirai_elev_g1.json（854KB、生成日時2026-08-17T02:12:43+0900）を生成。
+  4隅+中央の計5点を独立にライブAPI再取得し、キャッシュ値と**完全一致**（誤差0）を確認。
+- index.html: generateFlat()の格子計算直後・ライブ取得ループ直前に、SITE.elevCache（g・siteAdjが
+  一致する時だけ）でdata/hirai_elev_g1.jsonをfetchし、cols/rows/eMin/nMinの一致を再確認した上で
+  cellsをFLAT_GRIDへ採用するブロックを追加。不一致・取得失敗時は例外を投げず何もせず素通りし、
+  既存のライブfetchOne()ループへ自動フォールバックする設計（他物件・キャッシュ未整備時は
+  `SITE.elevCache`が未定義のため分岐に一切入らない）。`SITES.hirai`に
+  `elevCache:{url:'data/hirai_elev_g1.json', g:1, adj:{...defaultAdj値}}` を追加。
+- 検証（ブラウザ実機、fetchを監視するスパイを仕込んで実測）:
+  - hirai「平坦度を計算」→ cyberjapandata2への通信0件・data/hirai_elev_g1.jsonへの通信1件のみ、
+    FLAT_GRID 7878/7878点、`#flatProg`に「キャッシュ済み標高データを使用（API取得なし）：7878/7878 点」
+    を表示（2回連続で再現確認）。
+  - hannan（キャッシュ非対象）は従来どおり2194件全てcyberjapandata2への通信で完了（`完了：2193/2193 点`）
+    ＝キャッシュ分岐が他物件に一切影響していないことを確認。
+  - 面積表・区画別内訳（A+B+C=敷地全体で数値も一致）・「使える面積最大化」ボタン（敷地全体/A/B/C
+    それぞれ）がキャッシュ由来のFLAT_GRIDで問題なく動作することを確認。
+  - コンソールエラーなし（1件、本タスクと無関係な過去のnavigate起因のERR_CONNECTION_REFUSEDのみ）。
+  - **注意（本セッション終盤）**: 検証の終盤、オーケストレータ側セッションが並行してブラウザ操作
+    （tabId省略でtab-1を誤操作、上記「注意」欄参照）を行っており、共有ブラウザ環境の競合で
+    generateFlat()が（意図通り）確認ダイアログの自動キャンセル起因でライブ経路へフォールバックする
+    再現が数回発生した＝**キャッシュ側の不具合ではなく共有環境側の外乱**（confirm()の自動キャンセルで
+    g=1以外に自動調整される既存挙動。フォールバック自体は正しく安全に機能した）。この外乱発生前に
+    上記の清浄な検証（cyberCalls=0の2連続再現・5点完全一致）を取得済みのため、それを正としている。
+- **`.gitignore`の罠**: `data/`は最初のコミットから用途未使用のまま全面ignore、`_input/`は
+  「原本非公開」目的でignore（平井の測量座標を含むbuild_hirai.py等の前例も同じ理由で一度も
+  コミットされていない）。data/hirai_elev_g1.jsonはアプリが実行時fetch()で読む配布物のため全面
+  ignoreのままでは本番配布に乗らない→`data/*`+`!data/hirai_elev_g1.json`の個別許可に変更（data/
+  配下の他ファイルは従来通り非公開のまま維持）。fetch_elev_cache.py自体は_input/の前例
+  （build_hirai.py・build_split2.py、共に未コミット）に倣い非コミットのまま
+  （原本由来スクリプトの置き場という既存運用を継続。必要なら`git add -f`で個別追跡可）。
+- **並行セッションとの意図せぬコミット合流**: index.html側の配線（本項で書いた変更）は、本ワーカーが
+  未コミットのままworking treeに置いていたところ、並行して動いていたオーケストレータ側セッションが
+  同じindex.htmlへ`git add`した際に巻き込まれ、無関係な価格シミュレーション修正コミット`b7e83ad`
+  （2026-08-17 02:13:49、既にorigin/mainへpush済み）に同梱される形でコミットされていた
+  （`git log -S"elevCache:{url" -- index.html`で特定。内容はworking treeと完全一致＝本ワーカーの
+  実装そのもので、破損や別実装との衝突ではないことを確認済み）。コミット漏れではなく実質的には
+  完了しているが、コミットメッセージにelevCacheの言及が無いため、経緯をここに記録する。
+  本コミット（data/・.gitignore・本WORKLOG追記）が実質的な「work unit 2」に相当する。
+- 完了条件（指示書より）: fetch_elev_cache.py／data/hirai_elev_g1.json／index.html変更、揃って完了。
+  検証は実測で確認済み。指示書 docs/task_hirai_elev_cache.md は役目を終えたため削除する。
