@@ -298,6 +298,7 @@
       </div>
       <div id="legacyHint" class="hint" style="display:none">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
       <div style="margin-top:4px"><button class="primary" style="width:100%" onclick="generateFlat()">平坦度を計算</button></div>
+      <select id="optimizeRegionSel" style="width:100%;margin-top:6px;display:none;padding:3px"></select>
       <div style="margin-top:6px"><button class="small" style="width:100%" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button></div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
         <button class="small" onclick="clearFlat()">クリア</button>
@@ -816,6 +817,7 @@ function toggleSubAreaVariant(){
 function updateSubAreaToggleUI(){
   const btn=document.getElementById('subAreaToggleBtn');
   const panel=document.getElementById('deSplitPanel');
+  populateOptimizeRegionSel();   // 区画割の有無に関わらず毎回、選択肢を今の状態に合わせて作り直す
   if(!btn) return;
   if(!hasSubAreaVariants()){ btn.style.display='none'; if(panel) panel.style.display='none'; return; }
   btn.style.display='block';
@@ -824,6 +826,17 @@ function updateSubAreaToggleUI(){
   btn.textContent=`区画割案：${subAreaVariant}（クリックで${other}案に切替）`;
   // %指定パネルは「DE案（任意%で分割できる案）」を見ている時だけ出す
   if(panel) panel.style.display=(SITE.splitAxis && subAreaVariant==='DE') ? 'block' : 'none';
+}
+// 「使える面積最大化」ボタンの対象（敷地全体／各区画）を選べるプルダウンを、現在の区画割案に
+// 合わせて作り直す（区画割を持たない物件では非表示＝従来どおり敷地全体のみのボタンに戻る）。
+function populateOptimizeRegionSel(){
+  const sel=document.getElementById('optimizeRegionSel');
+  if(!sel) return;
+  const subs=currentSubAreas();
+  if(!subs || !subs.length){ sel.style.display='none'; sel.innerHTML=''; return; }
+  sel.innerHTML='<option value="-1">敷地全体を最適化</option>'
+    + subs.map((s,i)=>`<option value="${i}">${s.no.split(/\s+/)[0]}を最適化</option>`).join('');
+  sel.style.display='block';
 }
 // 調整用の参照地番（周辺筆refShapes＝敷地の外）＋内部分割（現在選択中の区画割案＝敷地の中）。
 // siteAdjustMode中だけ、メイン敷地と同じSITE_XFORMで描画。
@@ -1336,21 +1349,28 @@ function bestUsableAreaForCells(cells, gradeM){
   const elev=(bestLo+Math.min(bestHi,bestLo+2))/2;   // プラトーの中央付近（境界ぴったりを避け丸め誤差に強くする）
   return {area:Math.max(0,best), elev};
 }
-// 敷地内(FLAT_GRID.cells)から「平ら＋軽い造成で可」が最大になる基準点を探す（API呼び出しなし・
-// 区画A/B/C等の個別事情は考慮しない全体最適）。実在する標高点の中から目標標高に一番近い点を採用。
+// 敷地全体、または選択中の区画（A/B/C・D/E等）から「平ら＋軽い造成で可」が最大になる基準点を探す
+// （API呼び出しなし）。対象は#optimizeRegionSelで選ぶ（区画割を持たない物件では常に敷地全体）。
+// 実在する標高点の中から目標標高に一番近い点を採用。
 function optimizeFlatRef(){
   if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
   const usableM=currentUsableM();
-  // 敷地全体をbestRefForRegion()に渡す＝DE分割のE区画版と全く同じロジックを共有（重複実装しない）。
+  const sel=document.getElementById('optimizeRegionSel');
+  const idx = (sel && sel.style.display!=='none') ? parseInt(sel.value,10) : -1;
+  const subs=currentSubAreas();
+  const region = (idx>=0 && subs && subs[idx]) ? subs[idx] : null;
+  const targetPts = region ? region.pts : SITE.shape;
+  const label = region ? region.no.split(/\s+/)[0] : '敷地全体';
+  // bestRefForRegion()に渡す＝DE分割のE区画版と全く同じロジックを共有（重複実装しない）。
   // SITE.shapeをshapeToLatLngsしたものはsiteLatLngsと同一（どちらもSITE_XFORM由来）なのでpointInSite相当。
-  const best=bestRefForRegion(SITE.shape, usableM);
-  if(!best || !best.cell){ alert('敷地内に有効な標高データがありません。'); return; }
+  const best=bestRefForRegion(targetPts, usableM);
+  if(!best || !best.cell){ alert(`${label}内に有効な標高データがありません。`); return; }
   flatRef={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev, hsrc: flatRef?flatRef.hsrc:null};
   drawFlatRef(); saveFlatRef();
   recomputeFlatOnly();
   const prog=document.getElementById('flatProg');
   const tsubo=x=>(x/3.305785).toFixed(1);
-  if(prog) prog.textContent=`自動選択：基準標高${best.cell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${best.area.toFixed(0)}㎡（${tsubo(best.area)}坪）が最大`;
+  if(prog) prog.textContent=`自動選択（${label}）：基準標高${best.cell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${best.area.toFixed(0)}㎡（${tsubo(best.area)}坪）が最大`;
 }
 
 /* ====== DE分割案：任意%で分割線を平行にずらす（SITE.splitAxisを持つ物件だけ・平井専用機能） ====== */
