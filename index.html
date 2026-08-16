@@ -899,11 +899,12 @@ function priceSimBaseRegion(){
 }
 // 内訳テーブルの行＝区画割案ボタンに連動：ABC表示中はA/B/Cだけ、DE表示中はA/B/C/D/E全部
 // （「どのブロックが何か分かりづらい」への対応。DEはABCと別物ではなく同じ敷地の切り口違いなので両方並べて比較する）
-function priceSimRegionList(){
+// グループ単位で返す（各グループの後ろに小計行を出す＝ABC小計とDE小計が両方とも敷地全体と一致することを見せる）
+function priceSimGroups(){
   const abc=(SITE.subAreaSets && SITE.subAreaSets.ABC) || [];
-  const list=[...abc];
-  if(subAreaVariant==='DE' && SITE.subAreaSets && SITE.subAreaSets.DE) list.push(...SITE.subAreaSets.DE);
-  return list;
+  const groups=[{label:'ABC', items:abc}];
+  if(subAreaVariant==='DE' && SITE.subAreaSets && SITE.subAreaSets.DE) groups.push({label:'DE', items:SITE.subAreaSets.DE});
+  return groups;
 }
 function priceSimUsableArea(pts, thM){
   if(!FLAT_GRID || !SITE_XFORM) return null;
@@ -923,6 +924,17 @@ function priceSimRowHTML(name, baseName, area, tsuboText, price, f, t, y){
   return `<tr${isBase?' style="background:#16241b"':''}><td class="l">${name}${isBase?' <span style="color:#8bc34a;font-size:10px">(基準)</span>':''}</td>`+
     `<td>${f(area)}</td><td>${t(area)}</td><td>${y(price)}</td></tr>`;
 }
+// グループ(ABC or DE)の内訳行＋末尾に小計行。areaFnは区画ptsから面積(㎡)を出す関数(面積比/使える面積比で差し替える)
+function priceSimGroupRowsHTML(items, label, baseName, areaFn, unit, f, t, y){
+  let sum=0;
+  const rows=items.map(r=>{
+    const a=areaFn(r.pts);
+    sum+=a;
+    return priceSimRowHTML(r.no.split(/\s+/)[0], baseName, a, t, unit*a, f, t, y);
+  }).join('');
+  const subtotal=`<tr style="border-top:1px solid #33424f;font-weight:700;color:#cfe0ee"><td class="l">${label}小計</td><td>${f(sum)}</td><td>${t(sum)}</td><td>${y(unit*sum)}</td></tr>`;
+  return rows+subtotal;
+}
 function renderPriceSim(){
   const el=document.getElementById('priceSimResult');
   if(!el || !hasSubAreaVariants()) return;
@@ -933,11 +945,11 @@ function renderPriceSim(){
   const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1), y=x=>x.toFixed(1);
   const baseName=base.no.split(/\s+/)[0];
   const baseArea=shoelaceArea(base.pts);
-  const regions=priceSimRegionList();
+  const groups=priceSimGroups();
   const totalArea=shoelaceArea(SITE.shape);
 
   const unit1=baseArea>0 ? effPrice/baseArea : 0;   // 万円/㎡（面積比）
-  const rows1=regions.map(r=>priceSimRowHTML(r.no.split(/\s+/)[0], baseName, shoelaceArea(r.pts), t, unit1*shoelaceArea(r.pts), f, t, y)).join('');
+  const rows1=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName, r=>shoelaceArea(r), unit1, f, t, y)).join('');
   let html=`<div class="muted" style="font-size:11px;margin-bottom:6px">基準区画：${baseName}（約${f(baseArea)}㎡・${t(baseArea)}坪）　実効価格 ${y(effPrice)}万円${discountPct?`（${discountPct}%引き）`:''}　単価 ${unit1.toFixed(3)}万円/㎡</div>`;
   html+=`<div style="font-weight:700;color:#e6edf3;margin:4px 0 2px">面積比の試算</div>`
     + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalArea)}㎡（${t(totalArea)}坪）　→　<b>${y(unit1*totalArea)}万円</b></div>`
@@ -950,7 +962,8 @@ function renderPriceSim(){
     const baseUsable=priceSimUsableArea(base.pts, thM)||0;
     const unit2=baseUsable>0 ? effPrice/baseUsable : 0;
     const totalUsable=priceSimUsableArea(SITE.shape, thM)||0;
-    const rows2=regions.map(r=>{ const u=priceSimUsableArea(r.pts, thM)||0; return priceSimRowHTML(r.no.split(/\s+/)[0], baseName, u, t, unit2*u, f, t, y); }).join('');
+    const usableAreaFn=r=>priceSimUsableArea(r, thM)||0;
+    const rows2=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName, usableAreaFn, unit2, f, t, y)).join('');
     html+=`<div style="font-weight:700;color:#e6edf3;margin:8px 0 2px">使える面積比(±${(thM*100).toFixed(0)}cm)の試算</div>`
       + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalUsable)}㎡（${t(totalUsable)}坪）　→　<b>${y(unit2*totalUsable)}万円</b></div>`
       + `<table class="ftab">${baseUsable>0?'':'<caption style="color:#e07a4a">基準区画(A)の使える面積が0のため試算できません</caption>'}<tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
