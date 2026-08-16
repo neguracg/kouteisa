@@ -1855,7 +1855,17 @@ function tallyFlat(inTest){
   return r;
 }
 // 集計結果を表（色/区分/高低差/㎡/坪/％）にする
-function flatTableHTML(title, r, th){
+// 区画名を見出しに持つ「カード」でtotal/区画を囲む共通の枠。全体と個別区画を種別（色・太さ）で区別する
+// （全体＝青枠で強調、個別区画＝グレー枠）ための唯一の実装。新方式・旧方式どちらの表も同じ枠を使う。
+function regionCardHTML(name, bodyHtml, isTotal){
+  const border = isTotal ? '#3b82f6' : '#4b5b6b';
+  const bg = isTotal ? '#132436' : '#111a24';
+  const nameSize = isTotal ? '13px' : '12px';
+  return `<div style="background:${bg};border-left:3px solid ${border};border-radius:6px;padding:8px 10px;margin-bottom:8px">`+
+    `<div style="font-weight:700;color:#e6edf3;font-size:${nameSize};margin-bottom:4px">${name}</div>${bodyHtml}</div>`;
+}
+// 表そのもの（見出し「高低差ごとの面積一覧」はブロック全体で1回だけ出すので、ここには含めない）
+function flatBodyHTML(r, th){
   const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
   const pct=x=> r.total>0 ? (x/r.total*100).toFixed(1)+'%' : '—';
   let cum=0, cumTsubo=0;   // 「平ら」から順に積み上げた累計＝「ここまでの合計で使える分」
@@ -1868,7 +1878,7 @@ function flatTableHTML(title, r, th){
     `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td><td class="cum">${pct(cum)}</td><td class="${cumTsuboCls}">${tsuboOf(cumTsubo).toFixed(1)}</td></tr>`;
   }).join('');
   if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td><td class="cum">—</td><td class="cum">—</td></tr>`;
-  return `<table class="ftab"><caption>${title}　高低差ごとの面積一覧　約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
+  return `<table class="ftab"><caption>約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
     `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th><th>累計％</th><th>累計坪</th></tr>${rows}`+
     `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td><td class="cum">100%</td><td class="cum">${t(r.total)}</td></tr></table>`;
 }
@@ -1884,13 +1894,14 @@ function computeFlatAreas(){
 function computeFlatAreasLegacy(el){
   const th=flatThresholds();
   const all=tallyFlat(pointInSite);
-  let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さ±で判定）<br>`
-    + flatTableHTML('敷地 全体', all, th);
+  let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さ±で判定）`
+    + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">高低差ごとの面積一覧</div>`
+    + regionCardHTML('敷地全体', flatBodyHTML(all, th), true);
   // 区画別（内部分割を持つ物件だけ。同じ基準点・同じ取得済み標高で即座に比較できる）
   const subs=subAreaPolys();
   if(subs.length){
-    html+=`<div style="margin-top:6px;font-weight:700;color:#9fb0c0">区画別の内訳</div>`;
-    subs.forEach(s=>{ html+=flatTableHTML(s.no, tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs)), th); });
+    html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
+    subs.forEach(s=>{ html+=regionCardHTML(s.no, flatBodyHTML(tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs)), th), false); });
   }
   html+=`<span style="color:${FLAT_COLORS.flat}">―</span>青実線=平ら／<span style="color:${FLAT_COLORS.grade}">- -</span>緑破線=軽造成／<span style="color:${FLAT_COLORS.steep}">- -</span>橙破線=要造成（地図上の領域アウトライン）<br>`
     + `<span class="src">${hsrcNoteText()}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
@@ -1925,27 +1936,28 @@ function cutFillAreaTableHTML(arr){
       `<td>${rangeTxt[i]}</td><td>${f(arr[i])}</td><td>${t(arr[i])}</td><td class="${cls}">${t(cumTsubo)}</td></tr>`;
   }).join('');
   const sum=arr.reduce((a,b)=>a+b,0);
-  return `<table class="ftab"><caption>高低差ごとの面積一覧　約${f(sum)}㎡（${t(sum)}坪）</caption>`+
+  return `<table class="ftab"><caption>約${f(sum)}㎡（${t(sum)}坪）</caption>`+
     `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>累計坪</th></tr>${rows}</table>`;
 }
-function cutFillTableHTML(title, r){
+// 表そのもの＋土量行（見出し「高低差ごとの面積一覧」はブロック全体で1回だけ出すので、ここには含めない）
+function cutFillBodyHTML(r){
   const netVol=r.cutVol-r.fillVol;
   const netCol = netVol>=0 ? '#c8481f' : '#2d6cb5';   // バッジと同じ色で切土超過/盛土超過を示す
   const volLine=`<div style="font-size:11px;margin:2px 0 6px">`+
     `切土量 約${r.cutVol.toFixed(0)}㎥／盛土量 約${r.fillVol.toFixed(0)}㎥／差引 `+
     `<b style="color:${netCol}">${netVol>=0?'+':''}${netVol.toFixed(0)}㎥（${netVol>=0?'切土超過':'盛土超過'}）</b></div>`;
   const combined=[0,1,2,3].map(i=> r.cut[i]+r.fill[i]);   // 面積表は切土/盛土を合算
-  return `<div style="font-weight:700;color:#e6edf3;margin-top:8px">${title}</div>`+volLine
-    + cutFillAreaTableHTML(combined);
+  return volLine + cutFillAreaTableHTML(combined);
 }
 function computeFlatAreasCutFill(el){
   const all=tallyCutFill(pointInSite);
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`
-    + cutFillTableHTML('敷地 全体', all);
+    + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">高低差ごとの面積一覧</div>`
+    + regionCardHTML('敷地全体', cutFillBodyHTML(all), true);
   const subs=subAreaPolys();
   if(subs.length){
-    html+=`<div style="margin-top:6px;font-weight:700;color:#9fb0c0">区画別の内訳</div>`;
-    subs.forEach(s=>{ html+=cutFillTableHTML(s.no, tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs))); });
+    html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
+    subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs))), false); });
   }
   html+=`<div style="margin-top:6px">`+
     `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
