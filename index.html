@@ -269,13 +269,21 @@
           <input id="deSplitSlider" type="range" min="1" max="99" value="50" step="0.5" style="flex:1">
         </div>
         <div id="deSplitAreaInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
-          <label style="font-size:12px">E区画 目標面積(坪)<input id="deTargetArea" type="text" inputmode="decimal" placeholder="例 150" style="width:60px"></label>
-          <button class="small" onclick="applyDeTargetArea()">この面積になる%へ</button>
-        </div>
-        <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
-          <label style="font-size:12px">E区画 目標「使える面積」(坪)<input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150" style="width:60px"></label>
-          <button class="small" onclick="applyDeTargetUsable()">この使える面積になる%へ</button>
+        <div style="display:grid;grid-template-columns:auto 58px 44px auto;gap:6px 6px;align-items:center;margin-top:8px;font-size:12px">
+          <span>E区画 目標面積</span>
+          <input id="deTargetArea" type="text" inputmode="decimal" placeholder="例 150">
+          <select id="deTargetAreaUnit">
+            <option value="tsubo" selected>坪</option>
+            <option value="m2">㎡</option>
+          </select>
+          <button class="small" onclick="applyDeTargetArea()" title="この面積になる%へ反映">反映</button>
+          <span>使える面積</span>
+          <input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150">
+          <select id="deTargetUsableUnit">
+            <option value="tsubo" selected>坪</option>
+            <option value="m2">㎡</option>
+          </select>
+          <button class="small" onclick="applyDeTargetUsable()" title="この使える面積になる%へ反映">反映</button>
         </div>
       </div>
       <div id="legacyParams" class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px;display:none">
@@ -1416,12 +1424,19 @@ function applyDeSplitPercent(pctE){
   }else if(prog){ prog.textContent=`E=${pctE.toFixed(1)}%（E区画内に有効な標高データがありません）`; }
   return r;
 }
-// 逆算①：E区画の目標面積(坪)→その面積になる%
+// 目標面積の入力欄＋単位セレクト(坪/㎡)から㎡値を取り出す共通ヘルパー（両方の逆算ボタンで使う）
+function targetM2FromInput(valueId, unitId){
+  const v=parseFloat(document.getElementById(valueId).value);
+  if(!v || v<=0) return null;
+  const unit=document.getElementById(unitId).value;
+  return unit==='m2' ? v : v*3.305785;
+}
+// 逆算①：E区画の目標面積(坪/㎡)→その面積になる%
 function applyDeTargetArea(){
-  const v=parseFloat(document.getElementById('deTargetArea').value);
-  if(!v || v<=0){ alert('E区画の目標面積(坪)を入力してください。'); return; }
-  const targetM2=v*3.305785, total=shoelaceArea(SITE.shape);
-  if(targetM2>=total){ alert(`敷地全体でも約${(total/3.305785).toFixed(1)}坪しかありません。`); return; }
+  const targetM2=targetM2FromInput('deTargetArea','deTargetAreaUnit');
+  if(targetM2==null){ alert('E区画の目標面積を入力してください。'); return; }
+  const total=shoelaceArea(SITE.shape);
+  if(targetM2>=total){ alert(`敷地全体でも約${total.toFixed(0)}㎡（${(total/3.305785).toFixed(1)}坪）しかありません。`); return; }
   applyDeSplitPercent(targetM2/total*100);
 }
 // 逆算②：「使える面積(平+軽造成)最大化」を前提に、E区画がその目標使える面積になる%を求める。
@@ -1430,9 +1445,8 @@ function applyDeTargetArea(){
 // 最終的な基準点の設定・再描画はapplyDeSplitPercent()に一本化（重複ロジックを持たない）。
 function applyDeTargetUsable(){
   if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
-  const v=parseFloat(document.getElementById('deTargetUsable').value);
-  if(!v || v<=0){ alert('E区画の目標「使える面積」(坪)を入力してください。'); return; }
-  const targetM2=v*3.305785;
+  const targetM2=targetM2FromInput('deTargetUsable','deTargetUsableUnit');
+  if(targetM2==null){ alert('E区画の目標「使える面積」を入力してください。'); return; }
   const usableM=currentUsableM();
   const usableAt=(pctE)=> bestRefForRegion(splitSiteByPercent(100-pctE).E, usableM);
   const at05=usableAt(0.5), at995=usableAt(99.5);
