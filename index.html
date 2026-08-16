@@ -450,7 +450,7 @@ function cutFillLegendHTML(){
   }).join('');
   return `<b>平坦度 凡例（切土/盛土は色を区別せず高低差のみ）</b><br>${rows}`+
     `<span style="color:#ff2d2d">―</span>赤太線＝基準ライン（この線を挟んで切土/盛土のバッジを表示）<br>`+
-    `<span style="color:#fff;font-weight:700">━</span>白太線＝50cm境界（重要）`;
+    `<span style="color:#0d7a37;font-weight:700">━</span>緑太線＝50cm境界（重要）`;
 }
 function updateFlatLegend(){ if(flatLegendDiv) flatLegendDiv.innerHTML=flatLegendHTML(); }
 
@@ -1582,6 +1582,7 @@ function drawFlat(){
       html:`<div style="font:700 11px/1.2 sans-serif;color:#fff;background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(flatLayer);
   });
   drawFlatContours();
+  if(FLAT_SCHEME==='cutfill') drawCutFillBadges(FLAT_GRID, toLL);   // 敷地全体で切土/盛土バッジを1組だけ
   const areas=computeFlatAreas();   // スキームに応じた表を描画（ディスパッチャ）
   if(FLAT_SCHEME==='legacy') drawFlatOutlines(areas); else drawCutFillOutlines();
 }
@@ -1664,35 +1665,26 @@ function joinSegments(segs){
   }
   return paths;
 }
-// 局所座標(e,n)に最も近いFLAT_GRIDセルのdhを返す（バッジのどちら側が切土/盛土かの判定に使う）
-function cellDhNear(e,n,grid){
-  const {g,cols,rows,en0,cells}=grid;
-  let c=Math.round((e-en0.e)/g), r=Math.round((n-en0.n)/g);
-  c=Math.max(0,Math.min(cols-1,c)); r=Math.max(0,Math.min(rows-1,r));
-  const cell=cells[r*cols+c];
-  return cell? cell.dh : null;
-}
-// 基準ライン(dh=0)を挟んで切土/盛土のバッジを「敷地全体で1組だけ」置く（新方式のみ・色でなく
-// ラベルで方向を示す）。paths(dh=0の全区間)の中から最長のものを1本選び、その中心で判定する
-// （区間ごとに置くとバッジが増えすぎるため。小さめ・半透明で邪魔にならないように）。
-function drawCutFillBadges(paths, grid, toLL){
-  if(!paths.length) return;
-  const longest = paths.reduce((a,b)=> b.length>a.length ? b : a);
-  if(longest.length<4) return;   // 短すぎる断片は判定が不安定なのでバッジを置かない
-  const mi=Math.floor(longest.length/2), mid=longest[mi], prev=longest[Math.max(0,mi-1)];
-  let tx=mid.e-prev.e, tn=mid.n-prev.n; const tl=Math.hypot(tx,tn)||1; tx/=tl; tn/=tl;
-  const nx=-tn, nn=tx, off=Math.max(3, grid.g*1.5);   // 法線方向に数m離れた場所を見て高低を判定
-  const pA={e:mid.e+nx*off, n:mid.n+nn*off}, pB={e:mid.e-nx*off, n:mid.n-nn*off};
-  const dhA=cellDhNear(pA.e,pA.n,grid), dhB=cellDhNear(pB.e,pB.n,grid);
-  if(dhA==null || dhB==null) return;
-  const cutPt = dhA>=dhB ? pA : pB, fillPt = dhA>=dhB ? pB : pA;
-  const badge=(pt,label,bg)=>{
-    const ll=toLL(pt.e,pt.n);
+// 切土/盛土のバッジを「敷地全体で1組だけ」置く。等高線の局所的な接線方向から向きを推定する方式は
+// ノイズに弱く変な位置に出ることがあったため撤回し、【最大の連結領域（切土側/盛土側それぞれ）の
+// 重心】に1個ずつ置く単純な方式に変更（局所的な形状に依存しないので暴れない）。
+function drawCutFillBadges(grid, toLL){
+  const {cells,rows,cols}=grid;
+  const inSiteArr=cells.map(c=>pointInSite(c.lat,c.lon));
+  const placeCentroidBadge=(signTest,label,bg)=>{
+    const mask=cells.map((c,i)=> inSiteArr[i] && c.dh!=null && signTest(c.dh));
+    const {comp,sizes}=gridComponents(mask, rows, cols);
+    if(!sizes.length) return;
+    let bestComp=0; for(let i=1;i<sizes.length;i++) if(sizes[i]>sizes[bestComp]) bestComp=i;
+    let se=0, sn=0, n=0;
+    cells.forEach((c,i)=>{ if(mask[i] && comp[i]===bestComp){ se+=c.e; sn+=c.n; n++; } });
+    if(!n) return;
+    const ll=toLL(se/n, sn/n);
     L.marker([ll.lat,ll.lon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[11,8],
       html:`<div style="font:700 9px/1.4 sans-serif;color:#fff;background:${bg};padding:0 4px;border-radius:7px;white-space:nowrap;opacity:.62">${label}</div>`})}).addTo(flatLayer);
   };
-  badge(cutPt, '切土', '#c8481f');
-  badge(fillPt, '盛土', '#2d6cb5');
+  placeCentroidBadge(dh=>dh>=0, '切土', '#c8481f');
+  placeCentroidBadge(dh=>dh<0, '盛土', '#2d6cb5');
 }
 function drawFlatContours(){
   if(!FLAT_GRID) return;
@@ -1721,7 +1713,6 @@ function drawFlatContours(){
       if(isZero) pl.bindTooltip(`基準ライン（標高${flatRef&&flatRef.elev!=null?flatRef.elev.toFixed(1):'—'}m と同じ高さの等高線）`,{sticky:true});
       else if(isMeter) pl.bindTooltip(`${lvl>0?'+':''}${lvl.toFixed(0)}m`,{sticky:true});
     });
-    if(isZero && FLAT_SCHEME==='cutfill') drawCutFillBadges(paths, FLAT_GRID, toLL);
   });
 }
 // 指定範囲（内外判定の関数）のセルを4区分に集計。全体も区画別もこの1本を通す＝数字がズレない
@@ -1794,8 +1785,9 @@ function tallyCutFill(inTest){
   });
   return r;
 }
-// 切土 or 盛土いずれか片方向の4段階＋累計坪の表（新方式の表の正本。cutFillTableHTMLから呼ぶ）
-function cutFillDirTableHTML(dirLabel, dir, arr){
+// 4段階＋累計坪の表（新方式の表の正本）。切土/盛土は合算して1本にする
+// （方向別の2表は見づらいとの指摘を受け統合。土量(㎥)だけは引き続き切土/盛土を分けて示す）。
+function cutFillAreaTableHTML(arr){
   const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
   let cumTsubo=0;
   const rangeTxt=['0〜30cm','30〜50cm','50〜100cm','100cm超'];
@@ -1806,7 +1798,7 @@ function cutFillDirTableHTML(dirLabel, dir, arr){
       `<td>${rangeTxt[i]}</td><td>${f(arr[i])}</td><td>${t(arr[i])}</td><td class="${cls}">${t(cumTsubo)}</td></tr>`;
   }).join('');
   const sum=arr.reduce((a,b)=>a+b,0);
-  return `<table class="ftab"><caption>${dirLabel}　約${f(sum)}㎡（${t(sum)}坪）</caption>`+
+  return `<table class="ftab"><caption>切土+盛土　約${f(sum)}㎡（${t(sum)}坪）</caption>`+
     `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>累計坪</th></tr>${rows}</table>`;
 }
 function cutFillTableHTML(title, r){
@@ -1815,8 +1807,9 @@ function cutFillTableHTML(title, r){
   const volLine=`<div style="font-size:11px;margin:2px 0 6px">`+
     `切土量 約${r.cutVol.toFixed(0)}㎥／盛土量 約${r.fillVol.toFixed(0)}㎥／差引 `+
     `<b style="color:${netCol}">${netVol>=0?'+':''}${netVol.toFixed(0)}㎥（${netVol>=0?'切土超過':'盛土超過'}）</b></div>`;
+  const combined=[0,1,2,3].map(i=> r.cut[i]+r.fill[i]);   // 面積表は切土/盛土を合算
   return `<div style="font-weight:700;color:#e6edf3;margin-top:8px">${title}</div>`+volLine
-    + cutFillDirTableHTML('切土','cut',r.cut) + cutFillDirTableHTML('盛土','fill',r.fill);
+    + cutFillAreaTableHTML(combined);
 }
 function computeFlatAreasCutFill(el){
   const all=tallyCutFill(pointInSite);
@@ -1828,7 +1821,7 @@ function computeFlatAreasCutFill(el){
     subs.forEach(s=>{ html+=cutFillTableHTML(s.no, tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs))); });
   }
   html+=`<div style="margin-top:6px">`+
-    `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>を挟んで<b>切土</b>／<b>盛土</b>のバッジで方向を表示、<b style="color:#fff">白い太線</b>が50cm境界（最重要）です。<br>`+
+    `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
     `<span class="src">土量は基準面との標高差×格子面積の単純合計による概算です。法面形状・締固め・場外搬出入は考慮していません。切土/盛土量の差引は良否判定に使わず、規模の目安としてご確認ください。`
     + `${hsrcNoteText()}。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span></div>`;
   el.style.display='block';
@@ -1972,7 +1965,7 @@ function drawCutFillOutlines(){
   // 描画順：控えめな30cm・100cmを先に、最重要の50cmを最後（上）に重ねる
   drawGroup(maskAt(0.30), {style:{color:'#10151b', weight:2, dashArray:'4,4', opacity:.85, fill:false, interactive:true}, tooltip:'30cm以内（地ならし）'});
   drawGroup(maskAt(1.00), {style:{color:'#10151b', weight:2, dashArray:'1,5', opacity:.85, fill:false, interactive:true}, tooltip:'100cm以内'});
-  drawGroup(maskAt(0.50), {style:{color:'#ffffff', weight:4, opacity:1, fill:false, interactive:true}, tooltip:'50cm境界（土工まで＝現実的に使える範囲の目安・最重要）'});
+  drawGroup(maskAt(0.50), {style:{color:'#0d7a37', weight:4, opacity:1, fill:false, interactive:true}, tooltip:'50cm境界（土工まで＝現実的に使える範囲の目安・最重要）'});
 }
 
 function clearFlat(){
