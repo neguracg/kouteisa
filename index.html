@@ -257,12 +257,8 @@
     <div class="card tool-flat edit-only">
       <h2>平坦度判定（道路レベル基準）</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <button id="flatSchemeCutfillBtn" class="small primary" style="flex:1" onclick="setFlatScheme('cutfill')">切土/盛土（新方式）</button>
-        <button id="flatSchemeLegacyBtn" class="small" style="flex:1" onclick="setFlatScheme('legacy')">±20/50/80（旧方式）</button>
-      </div>
-      <button id="subAreaToggleBtn" class="small" style="width:100%;margin-top:6px;display:none" onclick="toggleSubAreaVariant()"></button>
-      <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
+      <button id="subAreaToggleBtn" style="width:100%;margin-top:8px;padding:10px;display:none;text-align:left;border-color:#3b82f6" onclick="toggleSubAreaVariant()"></button>
+      <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px;transition:opacity .15s">
         <div style="font-weight:700;color:#e6edf3;margin-bottom:4px">D/E 敷地分割</div>
         <div class="hint" style="margin:0 0 6px">D/E分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）。<b>E区画</b>が主役：ラインを動かすたびに、その時のE区画だけで「使える面積」が最大になる基準点を自動で探して反映します。</div>
         <div style="display:flex;gap:8px;align-items:center">
@@ -847,22 +843,41 @@ function updateSubAreaToggleUI(){
   btn.style.display='block';
   const keys=Object.keys(SITE.subAreaSets);
   const other=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
-  btn.textContent=`区画割案：${subAreaVariant}（クリックで${other}案に切替）`;
-  // %指定パネルは「DE案（任意%で分割できる案）」を見ている時だけ出す
-  if(panel) panel.style.display=(SITE.splitAxis && subAreaVariant==='DE') ? 'block' : 'none';
+  // 「今どの案を選んでいるか」が一目でわかる大事な状態表示なので、値を大きく見出し風に出す
+  btn.innerHTML=`<span style="font-size:11px;color:#9fb0c0">区画割案</span><br>`+
+    `<span style="font-size:17px;font-weight:700;color:#e6edf3">${subAreaVariant}</span>`+
+    `<span style="font-size:11px;color:#9fb0c0">　（クリックで${other}案に切替）</span>`;
+  // DE分割パネルは「今ABCを見ているから無関係」なだけで、display:noneで消すとブロックの出現/消失で
+  // 画面全体を把握しづらくなる（ユーザー指摘・設計ポリシー化）。常に置いたままグレーアウトで無効化する。
+  if(panel){
+    if(!SITE.splitAxis){ panel.style.display='none'; }   // この物件にDE案自体が無い時だけ完全に消す
+    else{
+      panel.style.display='block';
+      const active=(subAreaVariant==='DE');
+      panel.style.opacity=active?'1':'0.4';
+      panel.style.pointerEvents=active?'auto':'none';
+      panel.style.filter=active?'none':'grayscale(70%)';
+    }
+  }
   // 価格シミュレーションはABC/DEどちらを見ていても両方まとめて出す（区画割を持つ物件なら常時）
   if(priceSim){ priceSim.style.display='block'; renderPriceSim(); }
 }
 // 価格シミュレーション：基準価格を「面積比」「使える面積比(しきい値可変)」で各区画へ按分した目安額。
 // 実勢価格の推定ではなく単純比例配分。基準の分母は常に敷地全体（面積 / 使える面積）。
-function priceSimBaseChanged(){ priceSimSyncFromPct(); }
+// %欄／金額欄のどちらを最後に編集したかを覚えておき、実効価格はその「生の入力値」から直接出す。
+// （%へ一度変換してから戻すと表示用の小数第1位丸めを経由してしまい、1000万円指定のつもりが
+// 　999.5万円になる等の誤差が出る。人に見せる数字なので指定した値にぴったり一致させる）
+let priceSimDiscountSrc='pct';
+function priceSimBaseChanged(){ priceSimDiscountSrc='pct'; priceSimSyncFromPct(); }
 function priceSimSyncFromPct(){
+  priceSimDiscountSrc='pct';
   const base=parseFloat(document.getElementById('priceSimBase').value)||0;
   const pct=parseFloat(document.getElementById('priceSimDiscountPct').value)||0;
   document.getElementById('priceSimDiscountPrice').value=(base*(1-pct/100)).toFixed(1);
   renderPriceSim();
 }
 function priceSimSyncFromPrice(){
+  priceSimDiscountSrc='price';
   const base=parseFloat(document.getElementById('priceSimBase').value)||0;
   const price=parseFloat(document.getElementById('priceSimDiscountPrice').value);
   if(base>0 && !isNaN(price)) document.getElementById('priceSimDiscountPct').value=((1-price/base)*100).toFixed(1);
@@ -870,6 +885,10 @@ function priceSimSyncFromPrice(){
 }
 function priceSimEffPrice(){
   const base=parseFloat(document.getElementById('priceSimBase').value)||0;
+  if(priceSimDiscountSrc==='price'){
+    const price=parseFloat(document.getElementById('priceSimDiscountPrice').value);
+    if(!isNaN(price)) return price;   // 金額欄を最後に触った時はその値そのものを使う（丸め誤差を経由しない）
+  }
   const pct=parseFloat(document.getElementById('priceSimDiscountPct').value)||0;
   return base*(1-pct/100);
 }
@@ -1355,22 +1374,15 @@ function buildSharedBand(){
 
 /* ====== 平坦度判定（前面道路レベル=0基準） ====== */
 // 表示方式：'cutfill'=切土/盛土を分けて4段階＋土量（既定）／'legacy'=旧±20/50/80方式（絶対値のみ）
-let FLAT_SCHEME = (function(){ try{ const s=localStorage.getItem('kouteisa_flat_scheme'); return (s==='legacy')?'legacy':'cutfill'; }catch(e){ return 'cutfill'; } })();
-function setFlatScheme(s){
-  FLAT_SCHEME = (s==='legacy') ? 'legacy' : 'cutfill';
-  try{ localStorage.setItem('kouteisa_flat_scheme', FLAT_SCHEME); }catch(e){}
-  updateFlatSchemeUI();
-  if(FLAT_GRID) drawFlat();
-}
+// 常に新方式（切土/盛土）。旧方式(±20/50/80)の切替UIは廃止（2026-08-17・ユーザー指示「今後、新のみでいく」）。
+// 旧方式のロジック自体(computeFlatAreasLegacy等)はUIから到達不能になっただけで残置＝将来また使うなら
+// updateFlatSchemeUI()の分岐を戻すだけで復活できる。完全削除は別途判断。
+const FLAT_SCHEME = 'cutfill';
 function updateFlatSchemeUI(){
-  const cf=document.getElementById('flatSchemeCutfillBtn'), lg=document.getElementById('flatSchemeLegacyBtn');
   const legacyParams=document.getElementById('legacyParams'), legacyHint=document.getElementById('legacyHint'), cfNote=document.getElementById('cutfillNote');
-  const isLegacy=(FLAT_SCHEME==='legacy');
-  if(cf) cf.classList.toggle('primary', !isLegacy);
-  if(lg) lg.classList.toggle('primary', isLegacy);
-  if(legacyParams) legacyParams.style.display = isLegacy ? 'grid' : 'none';
-  if(legacyHint) legacyHint.style.display = isLegacy ? 'block' : 'none';
-  if(cfNote) cfNote.style.display = isLegacy ? 'none' : 'block';
+  if(legacyParams) legacyParams.style.display='none';
+  if(legacyHint) legacyHint.style.display='none';
+  if(cfNote) cfNote.style.display='block';
   updateFlatLegend();
 }
 // 「使える面積最大化」「DE分割の目標使える面積」が使う"使える"のしきい値(m)。
