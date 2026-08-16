@@ -263,6 +263,7 @@
       </div>
       <button id="subAreaToggleBtn" class="small" style="width:100%;margin-top:6px;display:none" onclick="toggleSubAreaVariant()"></button>
       <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
+        <div style="font-weight:700;color:#e6edf3;margin-bottom:4px">D/E 敷地分割</div>
         <div class="hint" style="margin:0 0 6px">D/E分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）。<b>E区画</b>が主役：ラインを動かすたびに、その時のE区画だけで「使える面積」が最大になる基準点を自動で探して反映します。</div>
         <div style="display:flex;gap:8px;align-items:center">
           <label style="font-size:12px;white-space:nowrap"><b>E区画</b>の割合<input id="deSplitPct" type="text" inputmode="decimal" value="50" style="width:50px;margin-left:4px"></label>%
@@ -285,6 +286,24 @@
           </select>
           <button class="small" onclick="applyDeTargetUsable()" title="この使える面積になる%へ反映">反映</button>
         </div>
+      </div>
+      <div id="priceSimPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
+        <div style="font-weight:700;color:#e6edf3;margin-bottom:6px">価格シミュレーション</div>
+        <div class="hint" style="margin:0 0 6px">基準価格を、区画ごとの<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく、単純な比例配分の目安）。</div>
+        <div style="display:grid;grid-template-columns:auto 70px auto;gap:6px 6px;align-items:center;font-size:12px">
+          <span>基準価格</span><input id="priceSimBase" type="text" inputmode="decimal" value="1298" oninput="priceSimBaseChanged()">万円
+          <span>値引き</span><input id="priceSimDiscountPct" type="text" inputmode="decimal" value="0" oninput="priceSimSyncFromPct()">%
+          <span>値引後金額</span><input id="priceSimDiscountPrice" type="text" inputmode="decimal" placeholder="任意入力" oninput="priceSimSyncFromPrice()">万円
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:6px">
+          <span>使える面積のしきい値</span>
+          <select id="priceSimThreshold" onchange="renderPriceSim()">
+            <option value="30">30cm</option>
+            <option value="50" selected>50cm</option>
+            <option value="100">100cm</option>
+          </select>
+        </div>
+        <div id="priceSimResult" style="margin-top:8px"></div>
       </div>
       <div id="legacyParams" class="params" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px;display:none">
         <label>平ら ±cm<input id="fFlatCm" type="text" inputmode="decimal" value="20"></label>
@@ -817,15 +836,87 @@ function toggleSubAreaVariant(){
 function updateSubAreaToggleUI(){
   const btn=document.getElementById('subAreaToggleBtn');
   const panel=document.getElementById('deSplitPanel');
+  const priceSim=document.getElementById('priceSimPanel');
   populateOptimizeRegionSel();   // 区画割の有無に関わらず毎回、選択肢を今の状態に合わせて作り直す
   if(!btn) return;
-  if(!hasSubAreaVariants()){ btn.style.display='none'; if(panel) panel.style.display='none'; return; }
+  if(!hasSubAreaVariants()){ btn.style.display='none'; if(panel) panel.style.display='none'; if(priceSim) priceSim.style.display='none'; return; }
   btn.style.display='block';
   const keys=Object.keys(SITE.subAreaSets);
   const other=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
   btn.textContent=`区画割案：${subAreaVariant}（クリックで${other}案に切替）`;
   // %指定パネルは「DE案（任意%で分割できる案）」を見ている時だけ出す
   if(panel) panel.style.display=(SITE.splitAxis && subAreaVariant==='DE') ? 'block' : 'none';
+  // 価格シミュレーションはABC/DEどちらを見ていても両方まとめて出す（区画割を持つ物件なら常時）
+  if(priceSim){ priceSim.style.display='block'; renderPriceSim(); }
+}
+// 価格シミュレーション：基準価格を「面積比」「使える面積比(しきい値可変)」で各区画へ按分した目安額。
+// 実勢価格の推定ではなく単純比例配分。基準の分母は常に敷地全体（面積 / 使える面積）。
+function priceSimBaseChanged(){ priceSimSyncFromPct(); }
+function priceSimSyncFromPct(){
+  const base=parseFloat(document.getElementById('priceSimBase').value)||0;
+  const pct=parseFloat(document.getElementById('priceSimDiscountPct').value)||0;
+  document.getElementById('priceSimDiscountPrice').value=(base*(1-pct/100)).toFixed(1);
+  renderPriceSim();
+}
+function priceSimSyncFromPrice(){
+  const base=parseFloat(document.getElementById('priceSimBase').value)||0;
+  const price=parseFloat(document.getElementById('priceSimDiscountPrice').value);
+  if(base>0 && !isNaN(price)) document.getElementById('priceSimDiscountPct').value=((1-price/base)*100).toFixed(1);
+  renderPriceSim();
+}
+function priceSimEffPrice(){
+  const base=parseFloat(document.getElementById('priceSimBase').value)||0;
+  const pct=parseFloat(document.getElementById('priceSimDiscountPct').value)||0;
+  return base*(1-pct/100);
+}
+function priceSimRegionList(){
+  // 敷地全体＋ABC/DE両案の区画を常に列挙（今どちらを表示中かに関わらず「全区画」を比較したいという要望のため）
+  const regions=[{no:'敷地全体', pts:SITE.shape}];
+  if(SITE.subAreaSets) Object.keys(SITE.subAreaSets).forEach(k=>{
+    (SITE.subAreaSets[k]||[]).forEach(s=>regions.push(s));
+  });
+  return regions;
+}
+function priceSimUsableArea(pts, thM){
+  if(!FLAT_GRID || !SITE_XFORM) return null;
+  const poly=shapeToLatLngs(pts, SITE_XFORM);
+  let s=0;
+  FLAT_GRID.cells.forEach(c=>{
+    if(c.dh==null) return;
+    if(Math.abs(c.dh)>thM) return;
+    if(!pointInLLPoly(c.lat,c.lon,poly)) return;
+    s+=FLAT_GRID.g*FLAT_GRID.g;
+  });
+  return s;
+}
+function renderPriceSim(){
+  const el=document.getElementById('priceSimResult');
+  if(!el || !hasSubAreaVariants()) return;
+  const effPrice=priceSimEffPrice();
+  const discountPct=parseFloat(document.getElementById('priceSimDiscountPct').value)||0;
+  const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1), y=x=>x.toFixed(1);
+  const regions=priceSimRegionList();
+  const totalArea=shoelaceArea(SITE.shape);
+  const rows1=regions.map(r=>{
+    const a=shoelaceArea(r.pts);
+    const price=totalArea>0 ? effPrice*a/totalArea : 0;
+    return `<tr><td class="l">${r.no.split(/\s+/)[0]}</td><td>${f(a)}</td><td>${t(a)}</td><td>${y(price)}</td></tr>`;
+  }).join('');
+  let html=`<div class="muted" style="font-size:11px;margin-bottom:6px">実効基準価格 ${y(effPrice)}万円${discountPct?`（${discountPct}%引き）`:''}</div>`
+    + `<table class="ftab"><caption>面積比の試算</caption><tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows1}</table>`;
+  if(!FLAT_GRID){
+    html+=`<div class="hint" style="margin-top:6px">先に「平坦度を計算」を実行すると、使える面積比の試算も出せます。</div>`;
+  } else {
+    const thM=(parseFloat(document.getElementById('priceSimThreshold').value)||50)/100;
+    const totalUsable=priceSimUsableArea(SITE.shape, thM)||0;
+    const rows2=regions.map(r=>{
+      const u=priceSimUsableArea(r.pts, thM)||0;
+      const price=totalUsable>0 ? effPrice*u/totalUsable : 0;
+      return `<tr><td class="l">${r.no.split(/\s+/)[0]}</td><td>${f(u)}</td><td>${t(u)}</td><td>${y(price)}</td></tr>`;
+    }).join('');
+    html+=`<table class="ftab" style="margin-top:6px"><caption>使える面積比(±${(thM*100).toFixed(0)}cm)の試算</caption><tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
+  }
+  el.innerHTML=html;
 }
 // 「使える面積最大化」ボタンの対象（敷地全体／各区画）を選べるプルダウンを、現在の区画割案に
 // 合わせて作り直す（区画割を持たない物件では非表示＝従来どおり敷地全体のみのボタンに戻る）。
@@ -1433,6 +1524,7 @@ function applyDeSplitPercent(pctE){
   const prog=document.getElementById('flatProg');
   if(info) info.textContent=`E 約${r.areaE.toFixed(0)}㎡（${t(r.areaE)}坪）／ D 約${r.areaD.toFixed(0)}㎡（${t(r.areaD)}坪）`;
   if(subAreaVariant==='DE') drawSiteRefs();
+  renderPriceSim();   // 面積比の試算は格子未取得でも追従（使える面積比の方はFLAT_GRID待ち）
   if(!FLAT_GRID) return r;   // 格子未取得＝面積の表示だけで、基準点の最適化はまだできない
   const usableM=currentUsableM();
   const best=bestRefForRegion(r.E, usableM);
@@ -1619,6 +1711,7 @@ function drawFlat(){
   if(FLAT_SCHEME==='cutfill') drawCutFillBadges(FLAT_GRID, toLL);   // 敷地全体で切土/盛土バッジを1組だけ
   const areas=computeFlatAreas();   // スキームに応じた表を描画（ディスパッチャ）
   if(FLAT_SCHEME==='legacy') drawFlatOutlines(areas); else drawCutFillOutlines();
+  renderPriceSim();   // 使える面積比の試算は基準点変更のたびに追従
 }
 
 /* 素朴なmarching squares：格子セル4隅の値とレベルの符号からエッジ交点を求めて線分化 */
@@ -1775,7 +1868,7 @@ function flatTableHTML(title, r, th){
     `<td>${f(r[c.key])}</td><td>${t(r[c.key])}</td><td>${pct(r[c.key])}</td><td class="cum">${pct(cum)}</td><td class="${cumTsuboCls}">${tsuboOf(cumTsubo).toFixed(1)}</td></tr>`;
   }).join('');
   if(r.miss>0.5) rows+=`<tr><td class="c">□</td><td class="l">欠測</td><td>—</td><td>${f(r.miss)}</td><td>${t(r.miss)}</td><td>${pct(r.miss)}</td><td class="cum">—</td><td class="cum">—</td></tr>`;
-  return `<table class="ftab"><caption>${title}　約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
+  return `<table class="ftab"><caption>${title}　高低差ごとの面積一覧　約${f(r.total)}㎡（${t(r.total)}坪）</caption>`+
     `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>％</th><th>累計％</th><th>累計坪</th></tr>${rows}`+
     `<tr class="tot"><td class="c"></td><td class="l">合計</td><td>—</td><td>${f(r.total)}</td><td>${t(r.total)}</td><td>100%</td><td class="cum">100%</td><td class="cum">${t(r.total)}</td></tr></table>`;
 }
@@ -1832,7 +1925,7 @@ function cutFillAreaTableHTML(arr){
       `<td>${rangeTxt[i]}</td><td>${f(arr[i])}</td><td>${t(arr[i])}</td><td class="${cls}">${t(cumTsubo)}</td></tr>`;
   }).join('');
   const sum=arr.reduce((a,b)=>a+b,0);
-  return `<table class="ftab"><caption>切土+盛土　約${f(sum)}㎡（${t(sum)}坪）</caption>`+
+  return `<table class="ftab"><caption>高低差ごとの面積一覧　約${f(sum)}㎡（${t(sum)}坪）</caption>`+
     `<tr><th>色</th><th>区分</th><th>高低差</th><th>㎡</th><th>坪</th><th>累計坪</th></tr>${rows}</table>`;
 }
 function cutFillTableHTML(title, r){
