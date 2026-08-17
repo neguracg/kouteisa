@@ -2298,16 +2298,32 @@ function getCliff(){
 }
 
 /* 現在の崖（プレビュー）を地図に描画：崖線＋崖下端から2Hの直線 */
+// isCliff判定（H>thH かつ 勾配>thA）はupdateReadout()の右パネル文言と必ず同じ式を使う。
+// 以前はここでチェックせず、選んだ2点が「がけ」の基準を満たさなくても常に2H影響ラインを描いていた
+// （文言は「該当しない可能性」なのに地図には赤い2H警告線、という食い違い。ユーザー実機で発覚）。
+function isCliffPair(c, ang){
+  const thH=parseFloat(document.getElementById('pH').value)||2;
+  const thA=parseFloat(document.getElementById('pAng').value)||30;
+  return c.H>thH && ang>thA;
+}
+function angleOf(c){
+  const dx=Math.abs(c.top.dist-c.bottom.dist);
+  return dx>0?deg(Math.atan2(c.H,dx)):90;
+}
 function drawCliff(){
   cliffLayer.clearLayers();
   const c=getCliff(); if(!c) return;
-  const mul=parseFloat(document.getElementById('pMul').value)||2;
-  const twoH=mul*c.H;
-  L.polyline([[c.top.lat,c.top.lon],[c.bottom.lat,c.bottom.lon]],{color:'#ffb020',weight:3}).addTo(cliffLayer);
+  const ang=angleOf(c);
+  const isCliff=isCliffPair(c,ang);
+  L.polyline([[c.top.lat,c.top.lon],[c.bottom.lat,c.bottom.lon]],{color:isCliff?'#ffb020':'#6b7d8f',weight:3}).addTo(cliffLayer);
   makeDot(cliffLayer,[c.top.lat,c.top.lon],COL.top,false);
   makeDot(cliffLayer,[c.bottom.lat,c.bottom.lon],COL.bottom,false);
   makeLabel(cliffLayer,L.latLng(c.top.lat,c.top.lon),`崖上端 ${c.top.elev.toFixed(1)}m`,COL.top,true);
-  makeLabel(cliffLayer,L.latLng(c.bottom.lat,c.bottom.lon),`崖下端 ${c.bottom.elev.toFixed(1)}m`,COL.bottom,true);
+  const bottomLabel = isCliff ? `崖下端 ${c.bottom.elev.toFixed(1)}m` : `下端 ${c.bottom.elev.toFixed(1)}m（がけ非該当・勾配${ang.toFixed(1)}°）`;
+  makeLabel(cliffLayer,L.latLng(c.bottom.lat,c.bottom.lon),bottomLabel,isCliff?COL.bottom:'#6b7d8f',true);
+  if(!isCliff) return;   // 基準を満たさない選択区間には2H影響ラインを出さない
+  const mul=parseFloat(document.getElementById('pMul').value)||2;
+  const twoH=mul*c.H;
   const brng=twoHDir(c);                                 // 崖下端→敷地（要対策）方向へ水平2H
   const endP=destination(c.bottom,brng,twoH);
   L.polyline([[c.bottom.lat,c.bottom.lon],[endP.lat,endP.lon]],{color:'#ff3b6b',weight:4,dashArray:'1,8',lineCap:'round'}).addTo(cliffLayer);
@@ -2320,6 +2336,10 @@ let confirmedCliffs=[];
 function confirmCliff(){
   const c=getCliff();
   if(!c){alert('断面図で崖の上端・下端をクリックしてから確定してください。');return;}
+  const ang=angleOf(c);
+  // drawCliff()と同じ基準。がけ非該当の区間を「確定」して2H線を残せてしまうと、
+  // 資料として出した時に実在しない要対策範囲を示すことになるため確認を挟む。
+  if(!isCliffPair(c,ang) && !confirm(`選択した2点は崖高${c.H.toFixed(1)}m・勾配${ang.toFixed(1)}°で、がけ条例の基準（高さ・勾配）を満たしていません。\nこのまま2H影響ラインとして確定しますか？`)) return;
   const mul=parseFloat(document.getElementById('pMul').value)||2;
   const twoH=mul*c.H;
   const idx=confirmedCliffs.length+1;
