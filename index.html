@@ -970,14 +970,14 @@ function priceSimGroups(){
 function priceSimUsableArea(pts, thM){
   if(!FLAT_GRID || !SITE_XFORM) return null;
   const poly=shapeToLatLngs(pts, SITE_XFORM);
-  let s=0;
+  const cellArea=FLAT_GRID.g*FLAT_GRID.g;
+  let inside=0, usable=0;
   FLAT_GRID.cells.forEach(c=>{
-    if(c.dh==null) return;
-    if(Math.abs(c.dh)>thM) return;
     if(!pointInLLPoly(c.lat,c.lon,poly)) return;
-    s+=FLAT_GRID.g*FLAT_GRID.g;
+    inside+=cellArea;   // 分母は区画内の全セル（欠測も含む＝欠測で使える率が水増しされないように）
+    if(c.dh!=null && Math.abs(c.dh)<=thM) usable+=cellArea;
   });
-  return s;
+  return usable*regionAreaScale(trueAreaOfLL(poly), inside);   // 実測図の面積へ正規化
 }
 // 区画行1本のHTML。基準区画(A)は色付きで区別し「(基準)」を明記する
 function priceSimRowHTML(name, baseName, area, tsuboText, price, f, t, y){
@@ -1614,12 +1614,15 @@ function splitSiteByPercent(pctD){
 function bestRefForRegion(regionPts, gradeM){
   if(!FLAT_GRID) return null;
   const ll=shapeToLatLngs(regionPts, SITE_XFORM);   // pointInLLPolyは[{lat,lon}]形式
-  const cells=FLAT_GRID.cells.filter(c=>c.elev!=null && pointInLLPoly(c.lat,c.lon,ll));
+  const inRegion=FLAT_GRID.cells.filter(c=>pointInLLPoly(c.lat,c.lon,ll));
+  const cells=inRegion.filter(c=>c.elev!=null);
   const best=bestUsableAreaForCells(cells, gradeM);
   if(best.elev==null) return {area:0, elev:null, cell:null};
   let bestCell=null, bestDiff=Infinity;
   FLAT_GRID.cells.forEach(c=>{ if(c.elev==null) return; const d=Math.abs(c.elev-best.elev); if(d<bestDiff){bestDiff=d; bestCell=c;} });
-  return {area:best.area, elev:best.elev, cell:bestCell};
+  // 面積は実測図へ正規化（どの基準標高が最大かの選択自体は定数倍なので影響を受けない）
+  const k=regionAreaScale(trueAreaOfLL(ll), inRegion.length*FLAT_GRID.g*FLAT_GRID.g);
+  return {area:best.area*k, elev:best.elev, cell:bestCell};
 }
 // %（E区画の割合）を反映：SITE.subAreaSets.DEを再生成し、E区画だけを切り出してその中で
 // 「使える面積」が最大になる基準点を毎回ライブで探して適用する（ラインを動かすたびに、
@@ -1634,7 +1637,9 @@ function applyDeSplitPercent(pctE){
   const t=x=>(x/3.305785).toFixed(1);
   const info=document.getElementById('deSplitAreaInfo');
   const prog=document.getElementById('flatProg');
-  if(info) info.textContent=`E 約${r.areaE.toFixed(0)}㎡（${t(r.areaE)}坪）／ D 約${r.areaD.toFixed(0)}㎡（${t(r.areaD)}坪）`;
+  // 表示面積は地図に描かれている実測多角形から出す（平坦度の表・価格試算と同じ正本を使う）
+  const areaE=trueAreaOfPts(r.E), areaD=trueAreaOfPts(r.D);
+  if(info) info.textContent=`E 約${areaE.toFixed(0)}㎡（${t(areaE)}坪）／ D 約${areaD.toFixed(0)}㎡（${t(areaD)}坪）`;
   if(subAreaVariant==='DE') drawSiteRefs();
   renderPriceSim();   // 面積比の試算は格子未取得でも追従（使える面積比の方はFLAT_GRID待ち）
   if(!FLAT_GRID) return r;   // 格子未取得＝面積の表示だけで、基準点の最適化はまだできない
@@ -1659,7 +1664,7 @@ function targetM2FromInput(valueId, unitId){
 function applyDeTargetArea(){
   const targetM2=targetM2FromInput('deTargetArea','deTargetAreaUnit');
   if(targetM2==null){ alert('E区画の目標面積を入力してください。'); return; }
-  const total=shoelaceArea(SITE.shape);
+  const total=siteTrueAreaM2();   // 目標㎡は「地図に描かれている実測面積」に対する割合として解釈する
   if(targetM2>=total){ alert(`敷地全体でも約${total.toFixed(0)}㎡（${(total/3.305785).toFixed(1)}坪）しかありません。`); return; }
   applyDeSplitPercent(targetM2/total*100);
 }
@@ -1984,7 +1989,23 @@ function drawFlatContours(){
   });
 }
 // 指定範囲（内外判定の関数）のセルを4区分に集計。全体も区画別もこの1本を通す＝数字がズレない
-function tallyFlat(inTest){
+/* ====== 面積の正規化（2026-08-17 腱さん承認） ======
+   格子セルの数え上げだけで面積を出すと、境界のセルが入る/入らないで実測図の面積と必ずずれる
+   （平井で実測: g=1mで+0.24%(+7㎡)、g=2mで-0.73%、g=4mで-1.57%(-45㎡≒13.6坪)）。
+   交渉資料として実測図と数字が食い違うのを避けるため、次の方式に統一する：
+     報告面積 ＝ 多角形の正確な面積（実測図由来） × (該当セル数 ÷ 区画内の全セル数)
+   面積の絶対値は実測図を正本とし、セルは「その中の内訳の割合」だけを担う。
+   これで敷地全体・各区画の合計は必ず実測図どおりになり、DEM由来なのは比率だけになる。 */
+function regionAreaScale(trueAreaM2, rawCellTotal){
+  return (trueAreaM2>0 && rawCellTotal>0) ? trueAreaM2/rawCellTotal : 1;
+}
+// 「実測の多角形面積(㎡)」の唯一の出し方。shape空間のptsからでもlatlngsからでもここを通す
+// （地図に実際に描かれている多角形＝敷地調整(siteAdj)を反映済みの形状の面積）。
+function trueAreaOfLL(ll){ return polygonArea(ll); }
+function trueAreaOfPts(pts){ return SITE_XFORM ? polygonArea(shapeToLatLngs(pts, SITE_XFORM)) : 0; }
+function siteTrueAreaM2(){ return polygonArea(siteLatLngs); }
+
+function tallyFlat(inTest, trueAreaM2){
   const {g,cells}=FLAT_GRID, th=flatThresholds(), cellArea=g*g;
   const r={total:0,miss:0,flat:0,grade:0,steep:0,over:0};
   cells.forEach(c=>{
@@ -1993,6 +2014,8 @@ function tallyFlat(inTest){
     if(c.dh==null){ r.miss+=cellArea; return; }   // 欠測は分類外（合計には含む）
     r[flatClassOf(Math.abs(c.dh), th)] += cellArea;
   });
+  const k=regionAreaScale(trueAreaM2, r.total);   // 実測図の面積へ正規化（比率は不変）
+  if(k!==1) ['total','miss','flat','grade','steep','over'].forEach(key=>{ r[key]*=k; });
   return r;
 }
 // 集計結果を表（色/区分/高低差/㎡/坪/％）にする
@@ -2034,7 +2057,7 @@ function computeFlatAreas(){
 }
 function computeFlatAreasLegacy(el){
   const th=flatThresholds();
-  const all=tallyFlat(pointInSite);
+  const all=tallyFlat(pointInSite, siteTrueAreaM2());
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さ±で判定）`
     + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">高低差ごとの面積一覧</div>`
     + regionCardHTML('敷地全体', flatBodyHTML(all, th), true);
@@ -2042,7 +2065,7 @@ function computeFlatAreasLegacy(el){
   const subs=subAreaPolys();
   if(subs.length){
     html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
-    subs.forEach(s=>{ html+=regionCardHTML(s.no, flatBodyHTML(tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs)), th), false); });
+    subs.forEach(s=>{ html+=regionCardHTML(s.no, flatBodyHTML(tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs)), th), false); });
   }
   html+=`<span style="color:${FLAT_COLORS.flat}">―</span>青実線=平ら／<span style="color:${FLAT_COLORS.grade}">- -</span>緑破線=軽造成／<span style="color:${FLAT_COLORS.steep}">- -</span>橙破線=要造成（地図上の領域アウトライン）<br>`
     + `<span class="src">${hsrcNoteText()}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
@@ -2051,7 +2074,7 @@ function computeFlatAreasLegacy(el){
   return {...th, aTotal:all.total, aFlat:all.flat, aGrade:all.grade, aSteep:all.steep, aOver:all.over};
 }
 // 新方式：切土/盛土を分けて4段階＋区画別集計＋土量(㎥)。全体も区画別もtallyCutFill()の1本を通す。
-function tallyCutFill(inTest){
+function tallyCutFill(inTest, trueAreaM2){
   const {g,cells}=FLAT_GRID, cellArea=g*g;
   const r={total:0, miss:0, cut:[0,0,0,0], fill:[0,0,0,0], cutVol:0, fillVol:0};
   cells.forEach(c=>{
@@ -2062,6 +2085,12 @@ function tallyCutFill(inTest){
     if(c.dh>=0){ r.cut[band]+=cellArea; r.cutVol+=c.dh*cellArea; }
     else{ r.fill[band]+=cellArea; r.fillVol+=(-c.dh)*cellArea; }
   });
+  // 実測図の面積へ正規化（比率は不変）。土量も面積に比例するので同じ係数を掛ける
+  const k=regionAreaScale(trueAreaM2, r.total);
+  if(k!==1){
+    r.total*=k; r.miss*=k; r.cutVol*=k; r.fillVol*=k;
+    for(let i=0;i<4;i++){ r.cut[i]*=k; r.fill[i]*=k; }
+  }
   return r;
 }
 // 4段階＋累計坪の表（新方式の表の正本）。切土/盛土は合算して1本にする
@@ -2091,14 +2120,14 @@ function cutFillBodyHTML(r){
   return volLine + cutFillAreaTableHTML(combined);
 }
 function computeFlatAreasCutFill(el){
-  const all=tallyCutFill(pointInSite);
+  const all=tallyCutFill(pointInSite, siteTrueAreaM2());
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`
     + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">高低差ごとの面積一覧</div>`
     + regionCardHTML('敷地全体', cutFillBodyHTML(all), true);
   const subs=subAreaPolys();
   if(subs.length){
     html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
-    subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs))), false); });
+    subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
   }
   html+=`<div style="margin-top:6px">`+
     `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
