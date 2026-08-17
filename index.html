@@ -411,13 +411,14 @@ const COL = { start:"#19c37d", end:"#e879f9", top:"#ffb020", bottom:"#38bdf8", s
 
 /* ====== 測線の点 ====== */
 const POINTS = {
-  top:   {name:"断面図 始点(上側)", color:COL.start, lat:35.0931148, lon:138.9555981, elev:null, placed:true},
-  bottom:{name:"断面図 終点(下側)", color:COL.end,   lat:35.0935590, lon:138.9552146, elev:null, placed:true},
+  top:   {name:"断面図 始点(上側)", color:COL.start, lat:35.0931148, lon:138.9555981, elev:null, placed:false},
+  bottom:{name:"断面図 終点(下側)", color:COL.end,   lat:35.0935590, lon:138.9552146, elev:null, placed:false},
 };
-// placed:true＝手で置いた/ドラッグした実座標。falseは「まだクリックされていない仮の位置」で、
-// drawMeasure()が薄く描き、cliffPointHintが「クリックして置いてください」と促す対象になる。
-// hannanの初期座標は最初から作図済みなのでplaced:true、switchSite()でresetCliffPoints()を呼ぶ
-// 他物件はplaced:falseへ戻す。
+// placed:true＝「今のユーザー操作で」手で置いた/ドラッグした実座標。falseは「まだクリックされて
+// いない仮の位置」で、drawMeasure()が薄く描き、cliffPointHintが「クリックして置いてください」と
+// 促す対象になる。座標が元から入っている(=hannanの初期値)ことと、ユーザーが実際に置いたことは別物
+// なので、初期状態は物件によらず必ずplaced:falseにする（2026-08-17 指摘・#186再修正：
+// 初期状態でplaced:trueにしていたためCtrl+F5直後から「両方の点を置きました」と誤表示していた）。
 let mode = "top";
 let TOOL = 'cliff';     // 'cliff'（がけ判定） | 'flat'（平坦度判定）
 let VIEW = false;       // 共有リンクの閲覧モード
@@ -985,7 +986,7 @@ function priceSimGroupRowsHTML(items, label, baseName, areaFn, unit, f, t, y){
     sum+=a;
     return priceSimRowHTML(r.no.split(/\s+/)[0], baseName, a, t, unit*a, f, t, y);
   }).join('');
-  const subtotal=`<tr style="border-top:1px solid #33424f;font-weight:700;color:#cfe0ee"><td class="l">${label}小計</td><td>${f(sum)}</td><td>${t(sum)}</td><td>${y(unit*sum)}</td></tr>`;
+  const subtotal=`<tr style="border-top:2px solid #3b82f6;background:#132436;font-weight:700;color:#e6edf3"><td class="l">${label}小計</td><td>${f(sum)}</td><td>${t(sum)}</td><td>${y(unit*sum)}</td></tr>`;
   return rows+subtotal;
 }
 function renderPriceSim(){
