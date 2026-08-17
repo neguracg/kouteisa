@@ -747,13 +747,20 @@ function drawMeasure(){
   measureLayer.clearLayers();
   if(VIEW||BAND_DONE) return;   // 閲覧モード・影響帯描画後は測線を出さない
   const t=POINTS.top,b=POINTS.bottom;
-  const bothPlaced=t.placed&&b.placed;
-  // 未配置(仮の位置)の間は線・点を薄く描き、「まだ実際には置いていない」ことを視覚的に示す
-  L.polyline([[t.lat,t.lon],[b.lat,b.lon]],{color:'#9fb0c0',weight:2,dashArray:'6,5',opacity:bothPlaced?.9:.32}).addTo(measureLayer);
-  makeDot(measureLayer,[t.lat,t.lon],t.color,true,ll=>setPoint('top',ll.lat,ll.lng,true));
-  makeDot(measureLayer,[b.lat,b.lon],b.color,true,ll=>setPoint('bottom',ll.lat,ll.lng,true));
-  makeLabel(measureLayer,L.latLng(t.lat,t.lon),((t.placed?'':'（未配置）')+'断面図始点'+(t.elev!=null?` ${t.elev}m`:'')),t.color,true);
-  makeLabel(measureLayer,L.latLng(b.lat,b.lon),((b.placed?'':'（未配置）')+'断面図終点'+(b.elev!=null?` ${b.elev}m`:'')),b.color,true);
+  // 未配置(placed:false)の点は仮座標があっても地図に一切描かない。中途半端な位置に薄く出す案は
+  // 「片方置いた直後、もう片方の仮位置へ変な線が伸びて見える」と再度指摘され撤回（2026-08-17）。
+  // 両方置くまでは「置いた方の点だけ」を表示し、線は両方揃ってから初めて引く。
+  if(t.placed && b.placed){
+    L.polyline([[t.lat,t.lon],[b.lat,b.lon]],{color:'#9fb0c0',weight:2,dashArray:'6,5',opacity:.9}).addTo(measureLayer);
+  }
+  if(t.placed){
+    makeDot(measureLayer,[t.lat,t.lon],t.color,true,ll=>setPoint('top',ll.lat,ll.lng,true));
+    makeLabel(measureLayer,L.latLng(t.lat,t.lon),('断面図始点'+(t.elev!=null?` ${t.elev}m`:'')),t.color,true);
+  }
+  if(b.placed){
+    makeDot(measureLayer,[b.lat,b.lon],b.color,true,ll=>setPoint('bottom',ll.lat,ll.lng,true));
+    makeLabel(measureLayer,L.latLng(b.lat,b.lon),('断面図終点'+(b.elev!=null?` ${b.elev}m`:'')),b.color,true);
+  }
 }
 
 /* ====== 敷地（区画）＝固定配置 ======
