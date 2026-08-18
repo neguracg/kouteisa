@@ -1125,13 +1125,19 @@ function drawSiteRefs(){
 // 両方から呼ばれるが、毎回clearLayers()してから描くので二重描画にはならない。
 function drawSubAreaDE(){
   subAreaLayer.clearLayers();
+  // D/Eも「同じ敷地」という指摘を受け、特別な独自配色（従来はオレンジ）をやめ、ABCと同じ見た目にする：
+  // 平坦度計算前＝敷地本体と同じ緑（区切りが見えるよう破線＋軽い塗り）、計算後＝ABC/XYと全く同じ紫破線。
+  const isCalc = !!FLAT_GRID;
+  const col = isCalc ? '#7c3aed' : COL.site;
   deSubAreaPolys().forEach(s=>{
     const ll=s.latlngs.map(p=>[p.lat,p.lon]);
-    // 実線＋オレンジ＝実在の筆（ABC/XYの濃い紫の破線＝計画上の分割、とは色・線種の両方で区別する）
-    L.polygon(ll,{color:'#e0a458',weight:2,opacity:.95,fill:false,interactive:false}).addTo(subAreaLayer);
+    const opt = isCalc
+      ? {color:col,weight:2,opacity:.9,dashArray:'5,4',fill:false,interactive:false}
+      : {color:col,weight:2,opacity:.9,dashArray:'4,3',fillColor:col,fillOpacity:.18,interactive:false};
+    L.polygon(ll,opt).addTo(subAreaLayer);
     const c=ll.reduce((a,p)=>[a[0]+p[0],a[1]+p[1]],[0,0]).map(v=>v/ll.length);
     L.marker(c,{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
-      html:`<div style="font:700 11px/1.2 sans-serif;color:#e0a458;background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(subAreaLayer);
+      html:`<div style="font:700 11px/1.2 sans-serif;color:${col};background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(subAreaLayer);
   });
 }
 function redrawSitePolygon(){
