@@ -568,3 +568,84 @@ ABC小計=DE小計=2877㎡。面積を出す全5経路をこの1本に集約し�
 
 ### 完了条件
 - 上記検証は全て実測で確認済み。指示書 `docs/task_xy_de_rename.md` は削除。BUGLOGは対象外（新機能）。
+
+## 2026-08-18 平井：D/E常時表示化＋切替2択化＋パネル上下入替（上記の設計差し戻し）
+
+上の「D/E分割をX/Y分割に改名」実装（commit 5499ef3）を腱さんがレビューし、区画割案を
+ABC→XY→DEの3案循環にしたのは意図と違うと指摘。D区画(1170-1)・E区画(1404-4)は実在の
+隣接筆であり、ABC/XY（同じ敷地1170-4をどう割るかの案）とは次元が違うため「案の1つ」
+として切替対象にしてはいけない、という訂正。指示書`docs/task_de_always_and_layout.md`
+（着手前に`git show 5499ef3`の差分を読んでから着手する指示付き）に従い実装（commit
+723ec62・2b5ae8a）。
+
+### 実施内容
+1. **切替をABC⇄XYの2択に戻し、DEを常設化**。`subAreaVariantKeys()`を新設し
+   （`SITE.subAreaSets`からDEを除いたキー配列を返す）、`toggleSubAreaVariant()`・
+   `updateSubAreaToggleUI()`の両方がこれだけを見るように統一（循環対象キーの知識を
+   二重管理しない）。`#deAccuracyHint`の表示条件も`subAreaVariant==='DE'`からSITEに
+   DEがあるかどうかに変更し、常時表示にした。
+2. **D/Eを常に地図に描画**。新規レイヤー`subAreaLayer`を追加（`siteLayer`と同じく常に
+   mapへ`.addTo()`、cliff/flatのタブ切替でも地図から外れない＝既存の`drawSiteRefs()`
+   ＝siteAdjustMode中だけ表示、とは別の常設の仕組みとして新設）。`deSubAreaPolys()`
+   （`subAreaPolys()`と同じ変換だが対象は`SITE.subAreaSets.DE`固定）を追加し、
+   `drawSubAreaDE()`が描画。**`redrawSitePolygon()`（敷地描画の経路）と`drawFlat()`の
+   両方から呼ぶ**ことで、平坦度グリッド未取得でもD/Eが見えるようにした。両経路とも
+   毎回`clearLayers()`してから描くため二重描画にはならない（Leafletレイヤーの
+   `getLayers().length`を実測して確認）。
+3. **色を修正**（本件の描画バグ本体。docs/BUGLOG.md参照）。ABC/XYの区画境界は
+   白(`#ffffff`)から濃い紫(`#7c3aed`)の破線に変更。D/Eはオレンジ(`#e0a458`、既存の
+   精度注意文言と同色)の実線とし、色・線種の両方で「計画上の分割」と「実在の筆」を
+   区別できるようにした。
+4. **表にもD/Eを常に出す**。`computeFlatAreasLegacy()`/`computeFlatAreasCutFill()`：
+   「区画別の内訳（ABC/XY）」の後に「隣接筆（D/E）」の別見出しを追加。D/E見出し直下
+   には`deAccuracyHintHTML()`（表示条件もSITEにDEがあるかどうかに変更）を必ず付ける。
+   `priceSimGroups()`：「選択中の案＋常にDE」を返すよう変更（旧
+   `if(subAreaVariant==='DE')`分岐を削除）。DE小計の行に「（別地・敷地面積には
+   含まれない）」を明記し、ABC小計と一致しないのが正しい挙動であることを誤りに
+   見せないようにした。
+5. **パネル上下入替**：`#flatResult`（高低差ごとの面積一覧）を`#priceSimPanel`
+   （価格シミュレーション）より前に移動（単純なHTML順序の入替のみ、JS変更なし。
+   `#priceSimPanel`の表示制御が`updateSubAreaToggleUI()`にある点も入替後に確認）。
+6. **ヨコテン**：「L.polygon/L.polylineのstroke colorを下地の明るさを考慮せず固定色で
+   ハードコードしている箇所」を機構レベルで棚卸し。`selLayer`の選択断面ハイライト線
+   （崖判定タブ、旧1485行付近）も同型と判定し、同じコミットで既存の黄(`#ffd166`、
+   flatRef基準点マーカーと同色)に修正。ルーラー点・崖線端点マーカー等の白は塗り潰し
+   色主体の縁取りや独自背景付きラベルで下地に直接依存しないため対象外と判定。
+
+### 検証（ブラウザ実機、python -m http.server 8934。検証後サーバー停止済み）
+- **2択循環の確認**：区画割案ボタンを実UIクリックで3回、`toggleSubAreaVariant()`直接
+  呼び出しで5回、両経路でABC⇄XYのみを循環しDEに切り替わらないことを確認。
+- **D/E常時描画**：ABC選択中・XY選択中どちらでも`subAreaLayer`に常にD/E 2ポリゴン
+  （色`#e0a458`・`dashArray`なし=実線・ラベル「D区画 1170-1」「E区画 1404-4」）が
+  存在することを、`FLAT_GRID`未計算（平坦度計算前）の状態で確認。物件をhannan→hirai
+  と往復させても`subAreaLayer`が2件のまま（重複なし）であることも確認。
+- **色修正の確認**：平坦度計算後、`flatLayer`内のABC/XY境界線が`#7c3aed`・
+  `dashArray:'5,4'`に変わり白(`#ffffff`)が残っていないことを実測（ABC選択中3本・
+  XY選択中2本と数も正しい）。
+- **表・価格シミュレーションの確認**：`#flatResult`のHTML内で「区画別の内訳（ABC）」
+  →「隣接筆（D/E）」の順で見出しが出て精度注意文言が含まれることを確認（XY選択中も
+  同様）。`compareDocumentPosition`でDOM順序を検証し`#flatResult`が`#priceSimPanel`
+  より前にあることを確認。`priceSimGroups()`がABC選択中`['ABC','DE']`、XY選択中
+  `['ABC','XY','DE']`を返し、価格シミュレーション表に「DE小計（別地・敷地面積には
+  含まれない）」の行が出ることを確認。
+- **回帰確認**：ABC選択中の面積表示が敷地全体2876㎡・A1000/B1000/C877㎡（従来の
+  999.9/1000.0/876.6㎡と丸め誤差の範囲で一致）。D/E面積も約303㎡/約310㎡で直前
+  コミットの値と一致（座標データは無変更のため当然の結果）。
+- **他物件の無影響**：hannan（`subAreaSets`を持たない物件）に切替し、`hasSubAreaVariants()
+  =false`・区画割ボタン/パネル/価格シミュレーション/精度注意が全て`display:none`・
+  `subAreaLayer`も0件・エラーなしを確認。
+- コンソールエラーなし（既存の無関係なtky2jgd CORSエラー2件のみで、index.html中に
+  `tky2jgd`文字列は存在せず本アプリのコードに起因しないことをgrepで確認済み）。
+  node -eでインラインscriptを抽出し`new Function()`で構文チェックOK。
+- **未実施**：このワーカー環境は`computer{action:"screenshot"}`が「Browser paneが
+  非表示」で失敗し取得不能（前回セッションと同じ制約）。色・線種の判定はLeafletレイヤー
+  オブジェクトのプロパティ直読み（`options.color`/`options.dashArray`）で代替したが、
+  実際に人の目で見た視認性（特に標準地図タイルでの見え方）の最終確認はできていない。
+  次回、画面が見える環境またはユーザー自身での目視確認を推奨。
+
+### 完了条件
+- 上記検証は実機（値の直接検証）で確認済み。目視のスクリーンショット確認のみ未実施
+  （残リスクとして明記）。指示書`docs/task_de_always_and_layout.md`は削除。
+  BUGLOGは「白い線で見えないバグ」の1件のみ記帳（docs/BUGLOG.md 2026-08-18、
+  commit 723ec62）。commit後 `git push` → `git fetch && git log origin/main` で
+  リモート反映を実測確認。
