@@ -298,9 +298,10 @@
           <button class="small" onclick="applyDeTargetUsable()" title="この使える面積になる%へ反映">反映</button>
         </div>
       </div>
+      <div class="note" id="flatResult" style="margin-top:8px;display:none"></div>
       <div id="priceSimPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
         <div style="font-weight:700;color:#e6edf3;margin-bottom:6px">価格シミュレーション</div>
-        <div class="hint" style="margin:0 0 6px"><b>A区画</b>だけが分かっている価格を基準に、他区画（B/C、XY表示中はX/Yも、DE表示中はD/Eも）を<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく単純な比例配分の目安。DE=1170-1/1404-4はABC敷地とは別の隣接地のため、小計はABC小計とは一致しません）。この価格を値引きすると全区画の試算額が連動して変わります。</div>
+        <div class="hint" style="margin:0 0 6px"><b>A区画</b>だけが分かっている価格を基準に、他区画（B/C、XY表示中はX/Yも、常にD/Eも）を<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく単純な比例配分の目安。DE=1170-1/1404-4はABC敷地とは別の隣接地のため、小計はABC小計とは一致しません）。この価格を値引きすると全区画の試算額が連動して変わります。</div>
         <div style="display:grid;grid-template-columns:auto 70px auto;gap:6px 6px;align-items:center;font-size:12px">
           <span>A区画 現在価格</span><input id="priceSimBase" type="text" inputmode="decimal" value="1298" oninput="priceSimBaseChanged()">万円
           <span>値引き</span><input id="priceSimDiscountPct" type="text" inputmode="decimal" value="0" oninput="priceSimSyncFromPct()">%
@@ -323,7 +324,6 @@
       </div>
       <div id="cutfillNote" class="hint" style="margin-top:8px">切土/盛土とも共通の段階：0〜30cm地ならし／30〜50cm土工／50〜100cm小型擁壁級／100cm超は造成（グラデーション）。</div>
       <div id="legacyHint" class="hint" style="display:none">平ら＝まるっきり平ら、そのまま使える目安。軽造成＝ちょっと頑張れば（軽い盛土・切土で）使える目安。要造成＝めっちゃ頑張れば（造成すれば）使えるかもという目安。それを超える所は傾斜地として色分けします。</div>
-      <div class="note" id="flatResult" style="margin-top:8px;display:none"></div>
     </div>
 
     <details class="card edit-only">
@@ -452,6 +452,7 @@ const confirmedLayer= L.layerGroup().addTo(map);
 const flatLayer      = L.layerGroup();   // 平坦度：セル塗り＋等高線（cliffモード開始のため既定では地図に追加しない）
 const flatRefLayer   = L.layerGroup();   // 平坦度：基準点マーカー
 const siteRefLayer   = L.layerGroup();   // 敷地調整：参照地番（周辺筆）。siteAdjustMode中だけ地図に追加
+const subAreaLayer   = L.layerGroup().addTo(map);   // D/E（実在の隣接2筆）：常時表示。cliff/flatどちらのタブでも地図から外れない
 const rulerLayer     = L.layerGroup().addTo(map);   // 距離計測ツール（📏）：がけ判定/平坦度どちらのタブでも使う
 
 /* 平坦度タブ中だけ地図に出す小さな凡例ボックス */
@@ -808,13 +809,17 @@ const SITES = {
             //   （柏谷の地籍図は世界測地系。図面ごとに測地系が異なるので流用時は必ず現地照合すること）
             shape:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53],[-9.87,47.25],[-20.04,36.45],[-21.57,34.81],[-33.64,24.15]],
             // 分割後の区画。subAreaSets＝敷地の「内部分割」の複数案（refShapesは敷地の外の隣接筆で別物）。
-            // 平坦度タブの区画別集計はこの subAreaSets の選択中の案だけを見る（外の筆を集計しない）。
+            // 平坦度タブの区画別集計は「選択中の案(ABC/XY)」の内訳に加えて「D/E（常設・案の選択に関わらず
+            // 常に表示）」も両方見る（computeFlatAreasLegacy/CutFill・priceSimGroups参照）。
             // ABC=分割計画図④の3区画案（正本）。XY=A/B境界(-44.31°)・B/C境界(135.81°、同一直線)と
             // 平行な1本の線で全体を任意%に分割する代替2区画案（初期値=面積二等分1438.52㎡ずつ。
             // _input/Hirai1298/build_split2.py）。X＝北側（腱さんが買いたい方）が主役、Y＝残る方。
             // 2026-08-18改名：旧「D/E分割」から呼び替え（E→X、D→Yの単純置換。ロジックは無変更）。
+            // ABC⇄XYの2択だけを区画割案ボタンでトグルする（subAreaVariantKeys()がDEを除外して対象を決める）。
             // DE=実在の隣接2筆（1170-1・1404-4、同じ所有者。役場の公図調査で判明した追加の売買候補）。
-            // XYと違い%で動く分割ではなく固定の筆界。座標の出典・精度注意は下記'DE'定義のコメント参照。
+            // XYと違い%で動く分割ではなく固定の筆界。ABC/XYの「同じ敷地の分割案」とは次元が違うため
+            // トグル対象から外し、地図・表へ常に描画する（2026-08-18再設計：3案循環にした直前の実装を差し戻し）。
+            // 座標の出典・精度注意は下記'DE'定義のコメント参照。
             subAreaSets:{
               'ABC':[
                 {no:'A区画 999.9㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.11,-15.38]]},
@@ -898,23 +903,39 @@ function buildSite(){
   SITE_XFORM={cx,cy,s,cr,sr,lat0,lon0,mLat,mLon};
   return shapeToLatLngs(sh, SITE_XFORM);
 }
-// 敷地の内部分割（区画割案）。物件によっては複数案(subAreaSets)を切替できる（例：平井のABC案/XY案/DE案）。
-let subAreaVariant=null;   // 選択中の案キー。switchSite()でSITE.subAreaDefaultに戻す
+// 敷地の内部分割（区画割案）。物件によっては複数案(subAreaSets)を切替できる（例：平井のABC案/XY案）。
+// DE（実在の隣接2筆）はsubAreaSetsの1キーだが「同じ敷地の分割案」ではないためトグル対象に含めない
+// （常設・常時表示。2026-08-18再設計：3案循環にした直前の実装を差し戻し。下のsubAreaVariantKeys()参照）。
+let subAreaVariant=null;   // 選択中の案キー（'ABC'か'XY'のみ）。switchSite()でSITE.subAreaDefaultに戻す
 function currentSubAreas(){
   if(SITE.subAreaSets) return SITE.subAreaSets[subAreaVariant] || SITE.subAreaSets[Object.keys(SITE.subAreaSets)[0]];
   return SITE.subAreas || null;   // 単一案のみの物件（将来の拡張用）
 }
-function hasSubAreaVariants(){ return !!(SITE.subAreaSets && Object.keys(SITE.subAreaSets).length>1); }
+// トグル切替の対象キー（＝案の選択肢）。'DE'（実在の隣接2筆）は常設区画でありABC/XYのような
+// 「同じ敷地の分割案」ではないため、切替候補から除外する。トグル本体(toggleSubAreaVariant)と
+// ボタン表示(updateSubAreaToggleUI)の両方がこの1関数だけを見る（知識を二重に持たない）。
+function subAreaVariantKeys(){
+  return SITE.subAreaSets ? Object.keys(SITE.subAreaSets).filter(k=>k!=='DE') : [];
+}
+function hasSubAreaVariants(){ return subAreaVariantKeys().length>1; }
 // 敷地の内部分割（現在選択中の案）を latlng で返す。平坦度の区画別集計と地図描画で共有する。
 function subAreaPolys(){
   const areas=currentSubAreas();
   if(!areas || !SITE_XFORM) return [];
   return areas.map(s=>({no:s.no, latlngs:shapeToLatLngs(s.pts, SITE_XFORM)}));
 }
+// D/E（実在の隣接2筆1170-1・1404-4）を常に latlng で返す（案の選択=subAreaVariantに関わらず）。
+// subAreaPolys()と同じ変換ロジックだが、対象はsubAreaSets.DE固定＝現在選択中の案とは独立。
+// 地図の常設描画(drawSubAreaDE)と、平坦度/価格シミュレーションの「隣接筆」セクションが共有する。
+function deSubAreaPolys(){
+  const areas=SITE.subAreaSets && SITE.subAreaSets.DE;
+  if(!areas || !SITE_XFORM) return [];
+  return areas.map(s=>({no:s.no, latlngs:shapeToLatLngs(s.pts, SITE_XFORM)}));
+}
 // 区画割案の切替ボタン（物件が複数案を持つ時だけ）。地図・平坦度の表示を選択中の案へ即座に差し替える。
 function toggleSubAreaVariant(){
   if(!hasSubAreaVariants()) return;
-  const keys=Object.keys(SITE.subAreaSets);
+  const keys=subAreaVariantKeys();   // ABC⇄XYの2択のみ（DEは常設・トグル対象外）
   subAreaVariant=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
   updateSubAreaToggleUI();
   drawSiteRefs();
@@ -929,16 +950,17 @@ function updateSubAreaToggleUI(){
   if(!btn) return;
   if(!hasSubAreaVariants()){ btn.style.display='none'; if(panel) panel.style.display='none'; if(accHint) accHint.style.display='none'; if(priceSim) priceSim.style.display='none'; return; }
   btn.style.display='block';
-  const keys=Object.keys(SITE.subAreaSets);
+  const keys=subAreaVariantKeys();   // ABC⇄XYの2択のみ（DEは常設・トグル対象外）
   const other=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
   // 「今どの案を選んでいるか」が一目でわかる大事な状態表示なので、値を大きく見出し風に出す
   btn.innerHTML=`<span style="font-size:11px;color:#9fb0c0">区画割案</span><br>`+
     `<span style="font-size:17px;font-weight:700;color:#e6edf3">${subAreaVariant}</span>`+
     `<span style="font-size:11px;color:#9fb0c0">　（クリックで${other}案に切替）</span>`;
-  // DE（実在の隣接2筆1170-1・1404-4）表示中だけ、公図からの概算トレースである旨を出す
-  // （精度を偽って見せない。座標の出典・詳細はSITES.hirai.subAreaSets.DEの定義コメント参照）
+  // D/E（実在の隣接2筆1170-1・1404-4）はこの物件にあれば常に地図・表へ出るので、注意書きも
+  // 案の選択(subAreaVariant)に関わらず常時表示する（精度を偽って見せない。座標の出典・詳細は
+  // SITES.hirai.subAreaSets.DEの定義コメント参照）。
   if(accHint){
-    const showAcc=(subAreaVariant==='DE');
+    const showAcc=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
     accHint.style.display=showAcc?'block':'none';
     if(showAcc) accHint.textContent='⚠ D/E（1170-1・1404-4）は公図からの概算トレースです。正式な地積測量図が入手でき次第、座標を差し替え予定。';
   }
@@ -993,15 +1015,17 @@ function priceSimBaseRegion(){
   const abc=(SITE.subAreaSets && SITE.subAreaSets.ABC) || [];
   return abc.find(s=>s.no.split(/\s+/)[0]==='A区画') || abc[0] || null;
 }
-// 内訳テーブルの行＝区画割案ボタンに連動：ABC表示中はA/B/Cだけ、XY・DE表示中はABCに加えてその案も並べる
+// 内訳テーブルの行＝区画割案ボタンに連動：ABC表示中はA/B/C＋D/E、XY表示中はABC＋X/Y＋D/E
 // （「どのブロックが何か分かりづらい」への対応）。XYはABCと別物ではなく同じ敷地の切り口違いなので両方の
-// 小計が敷地全体と一致する（検算になる）。一方DE（実在の隣接2筆1170-1/1404-4）はABC敷地とは別の土地
-// なので、DE小計はABC小計・敷地全体とは一致しない（単価だけ流用した別枠の参考試算）。
+// 小計が敷地全体と一致する（検算になる）。一方DE（実在の隣接2筆1170-1/1404-4）は案の選択に関わらず
+// 常に付け足す別枠で、ABC敷地とは別の土地のためDE小計はABC小計・敷地全体とは一致しない
+// （単価だけ流用した参考試算。誤りに見えないようpriceSimGroupRowsHTML()の小計行に注記を付ける）。
 // グループ単位で返す（各グループの後ろに小計行を出す）
 function priceSimGroups(){
   const abc=(SITE.subAreaSets && SITE.subAreaSets.ABC) || [];
   const groups=[{label:'ABC', items:abc}];
   if(subAreaVariant!=='ABC' && SITE.subAreaSets && SITE.subAreaSets[subAreaVariant]) groups.push({label:subAreaVariant, items:SITE.subAreaSets[subAreaVariant]});
+  if(SITE.subAreaSets && SITE.subAreaSets.DE) groups.push({label:'DE', items:SITE.subAreaSets.DE});
   return groups;
 }
 function priceSimUsableArea(pts, thM){
@@ -1030,7 +1054,9 @@ function priceSimGroupRowsHTML(items, label, baseName, areaFn, unit, f, t, y){
     sum+=a;
     return priceSimRowHTML(r.no.split(/\s+/)[0], baseName, a, t, unit*a, f, t, y);
   }).join('');
-  const subtotal=`<tr style="border-top:2px solid #3b82f6;background:#132436;font-weight:700;color:#e6edf3"><td class="l">${label}小計</td><td>${f(sum)}</td><td>${t(sum)}</td><td>${y(unit*sum)}</td></tr>`;
+  // DE小計は敷地(ABC)とは別の土地なので、他の小計と一致しないのが正しい挙動。誤りに見えないよう明記する。
+  const subtotalLabel = label==='DE' ? 'DE小計（別地・敷地面積には含まれない）' : `${label}小計`;
+  const subtotal=`<tr style="border-top:2px solid #3b82f6;background:#132436;font-weight:700;color:#e6edf3"><td class="l">${subtotalLabel}</td><td>${f(sum)}</td><td>${t(sum)}</td><td>${y(unit*sum)}</td></tr>`;
   return rows+subtotal;
 }
 function renderPriceSim(){
@@ -1093,6 +1119,21 @@ function drawSiteRefs(){
       html:`<div style="font:700 10px/1.2 sans-serif;color:${color};background:rgba(15,23,32,.75);padding:1px 4px;border-radius:4px;white-space:nowrap">${ref.no}</div>`})}).addTo(siteRefLayer);
   });
 }
+// D/E（実在の隣接2筆1170-1・1404-4）を常時描画する専用レイヤー。ABC/XYの案トグルとは無関係に、
+// この物件にDEがあれば常に表示する（siteAdjustMode中だけのdrawSiteRefsとは異なり、cliff/flatどちらの
+// タブでも・平坦度グリッド未取得でも見える）。redrawSitePolygon()（敷地描画の経路）とdrawFlat()の
+// 両方から呼ばれるが、毎回clearLayers()してから描くので二重描画にはならない。
+function drawSubAreaDE(){
+  subAreaLayer.clearLayers();
+  deSubAreaPolys().forEach(s=>{
+    const ll=s.latlngs.map(p=>[p.lat,p.lon]);
+    // 実線＋オレンジ＝実在の筆（ABC/XYの濃い紫の破線＝計画上の分割、とは色・線種の両方で区別する）
+    L.polygon(ll,{color:'#e0a458',weight:2,opacity:.95,fill:false,interactive:false}).addTo(subAreaLayer);
+    const c=ll.reduce((a,p)=>[a[0]+p[0],a[1]+p[1]],[0,0]).map(v=>v/ll.length);
+    L.marker(c,{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
+      html:`<div style="font:700 11px/1.2 sans-serif;color:#e0a458;background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(subAreaLayer);
+  });
+}
 function redrawSitePolygon(){
   siteLayer.clearLayers();
   siteLatLngs=buildSite();
@@ -1101,6 +1142,7 @@ function redrawSitePolygon(){
   poly.bindTooltip(`${siteLabel}約${polygonArea(siteLatLngs).toFixed(0)}㎡`+(siteAdjustMode?'／ドラッグで移動':''),{sticky:true});
   if(siteAdjustMode) poly.on('mousedown', startSiteDrag);
   drawSiteRefs();
+  drawSubAreaDE();   // D/E（実在の隣接筆）：平坦度グリッド未取得でも見えるよう、敷地描画の経路でも必ず描く
   updateSiteReadout();
 }
 /* 緑のポリゴン本体をつかんで移動 */
@@ -1440,7 +1482,9 @@ async function showStripSection(i){
   selLayer.clearLayers();
   const clip=clipToSite(st.startLL,st.endLL);
   const hl=clip?[[clip[0].lat,clip[0].lon],[clip[1].lat,clip[1].lon]]:[[st.startLL.lat,st.startLL.lon],[st.endLL.lat,st.endLL.lon]];
-  L.polyline(hl,{color:'#ffffff',weight:3,opacity:.95,interactive:false}).addTo(selLayer);
+  // 2026-08-18 ヨコテン：白(#ffffff)は明るい下地(標準地図タイル等)で見えないバグと同じ機構のため
+  // 既存の「ハイライト用の黄」(#ffd166、flatRef基準点マーカー・距離計測ツールと同色)に変更
+  L.polyline(hl,{color:'#ffd166',weight:3,opacity:.95,interactive:false}).addTo(selLayer);
   const win=chartWindow();
   if(win){
     const at=d=>{let n=SAMPLES[0],md=Infinity;SAMPLES.forEach(p=>{const dd=Math.abs(p.dist-d);if(dd<md){md=dd;n=p;}});return n;};
@@ -1883,14 +1927,17 @@ function drawFlat(){
     const sw=toLL(cell.e-half,cell.n-half), ne=toLL(cell.e+half,cell.n+half);
     L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:col,fillOpacity:op,interactive:false}).addTo(flatLayer);
   });
-  // 内部分割（A/B/C等）の境界を薄く重ねる＝結果表の区画別行がどこを指すか地図で分かる
+  // 内部分割（A/B/C等、選択中の案）の境界を重ねる＝結果表の区画別行がどこを指すか地図で分かる。
+  // 色は濃い紫の破線（計画上の分割）。D/E（実在の隣接筆）とは別色・別線種にして種別を区別する
+  // （2026-08-18：旧は白破線で下地(航空写真・標準地図)に埋もれて見えないバグがあった。docs/BUGLOG.md参照）。
   subAreaPolys().forEach(s=>{
     const ll=s.latlngs.map(p=>[p.lat,p.lon]);
-    L.polygon(ll,{color:'#ffffff',weight:2,opacity:.9,dashArray:'5,4',fill:false,interactive:false}).addTo(flatLayer);
+    L.polygon(ll,{color:'#7c3aed',weight:2,opacity:.9,dashArray:'5,4',fill:false,interactive:false}).addTo(flatLayer);
     const c=ll.reduce((a,p)=>[a[0]+p[0],a[1]+p[1]],[0,0]).map(v=>v/ll.length);
     L.marker(c,{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
-      html:`<div style="font:700 11px/1.2 sans-serif;color:#fff;background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(flatLayer);
+      html:`<div style="font:700 11px/1.2 sans-serif;color:#7c3aed;background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(flatLayer);
   });
+  drawSubAreaDE();   // D/E（実在の隣接2筆）は常設レイヤーなので毎回clearLayers()してから描き直す（二重描画防止）
   drawFlatContours();
   if(FLAT_SCHEME==='cutfill') drawCutFillBadges(FLAT_GRID, toLL);   // 敷地全体で切土/盛土バッジを1組だけ
   const areas=computeFlatAreas();   // スキームに応じた表を描画（ディスパッチャ）
@@ -2088,10 +2135,12 @@ function flatBodyHTML(r, th){
 function hsrcNoteText(){
   return (flatRef && flatRef.hsrc) ? `国土地理院DEM（当地点は${flatRef.hsrc}。データ源は地点により異なる）` : '国土地理院DEM（データ源は地点により異なる＝5mメッシュとは限らない）';
 }
-// DE（実在の隣接2筆 1170-1/1404-4）表示中だけ出す精度注意書き（正本はここ1箇所。表示箇所は複数：
-// updateSubAreaToggleUI()の#deAccuracyHint、区画別内訳の見出し直下）。精度を偽って見せないための表示。
+// DE（実在の隣接2筆 1170-1/1404-4）がこの物件にある時は常に出す精度注意書き（正本はここ1箇所。
+// 表示箇所は複数：updateSubAreaToggleUI()の#deAccuracyHint、区画別内訳の「隣接筆（D/E）」見出し直下）。
+// 精度を偽って見せないための表示。DEは常設（案の選択subAreaVariantに関わらず出る）なので、この関数の
+// 条件もSITEにDEがあるかどうかだけで判定する。
 function deAccuracyHintHTML(){
-  return subAreaVariant==='DE' ? `<div class="hint" style="color:#e0a458;margin:2px 0 6px">⚠ D/E（1170-1・1404-4）は公図からの概算トレースです。正式な地積測量図が入手でき次第、座標を差し替え予定。</div>` : '';
+  return (SITE.subAreaSets && SITE.subAreaSets.DE) ? `<div class="hint" style="color:#e0a458;margin:2px 0 6px">⚠ D/E（1170-1・1404-4）は公図からの概算トレースです。正式な地積測量図が入手でき次第、座標を差し替え予定。</div>` : '';
 }
 // スキームに応じて結果パネルを描画するディスパッチャ（呼び出し元はスキームを意識しない）
 function computeFlatAreas(){
@@ -2108,8 +2157,14 @@ function computeFlatAreasLegacy(el){
   // 区画別（内部分割を持つ物件だけ。同じ基準点・同じ取得済み標高で即座に比較できる）
   const subs=subAreaPolys();
   if(subs.length){
-    html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`+deAccuracyHintHTML();
+    html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
     subs.forEach(s=>{ html+=regionCardHTML(s.no, flatBodyHTML(tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs)), th), false); });
+  }
+  // 隣接筆D/E（実在の別地。案の選択に関わらず常に出す＝同じ敷地の分割案ABC/XYと混ざらないよう別見出し）
+  const des=deSubAreaPolys();
+  if(des.length){
+    html+=`<div style="margin:8px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">隣接筆（D/E）</div>`+deAccuracyHintHTML();
+    des.forEach(s=>{ html+=regionCardHTML(s.no, flatBodyHTML(tallyFlat((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs)), th), false); });
   }
   html+=`<span style="color:${FLAT_COLORS.flat}">―</span>青実線=平ら／<span style="color:${FLAT_COLORS.grade}">- -</span>緑破線=軽造成／<span style="color:${FLAT_COLORS.steep}">- -</span>橙破線=要造成（地図上の領域アウトライン）<br>`
     + `<span class="src">${hsrcNoteText()}による概算。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span>`;
@@ -2170,8 +2225,14 @@ function computeFlatAreasCutFill(el){
     + regionCardHTML('敷地全体', cutFillBodyHTML(all), true);
   const subs=subAreaPolys();
   if(subs.length){
-    html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`+deAccuracyHintHTML();
+    html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
     subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
+  }
+  // 隣接筆D/E（実在の別地。案の選択に関わらず常に出す＝同じ敷地の分割案ABC/XYと混ざらないよう別見出し）
+  const des=deSubAreaPolys();
+  if(des.length){
+    html+=`<div style="margin:8px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">隣接筆（D/E）</div>`+deAccuracyHintHTML();
+    des.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
   }
   html+=`<div style="margin-top:6px">`+
     `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
