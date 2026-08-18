@@ -330,9 +330,31 @@
       <summary class="dsum">敷地（区画図トレース）／位置・角度・倍率の調整</summary>
       <div class="dcont">
         <div class="hint" style="margin-top:0">区画図の緑部分を抽出して配置。調整値はこのブラウザに自動保存され、次回も同じ配置で表示。</div>
-        <div id="kouzuToggleWrap" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:12px">
-          <input type="checkbox" id="kouzuToggle" onchange="toggleKouzuOverlay()">
-          <label for="kouzuToggle" style="cursor:pointer">元の公図スキャンを地図に重ねて表示（位置合わせの確認用）</label>
+        <div id="kouzuToggleWrap" style="display:none;margin-top:8px;font-size:12px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="kouzuToggle" onchange="toggleKouzuOverlay()">
+            <label for="kouzuToggle" style="cursor:pointer">公図（ピンク線）を地図に重ねて表示</label>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <button class="small primary" id="kouzuAdjBtn" onclick="toggleKouzuAdjust()">公図を調整</button>
+            <button class="small" onclick="resetKouzuAdj()">公図の配置リセット</button>
+          </div>
+          <div id="kouzuCtrl" style="display:none;margin-top:8px">
+            <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+              <span class="muted" style="font-size:11px">角度</span>
+              <button class="small" onclick="rotateKouzu(-5)">⟲5°</button>
+              <button class="small" onclick="rotateKouzu(-1)">−1°</button>
+              <button class="small" onclick="rotateKouzu(1)">+1°</button>
+              <button class="small" onclick="rotateKouzu(5)">⟳5°</button>
+              <span class="muted" style="font-size:11px;margin-left:4px">倍率</span>
+              <button class="small" onclick="scaleKouzu(1/1.05)">−5%</button>
+              <button class="small" onclick="scaleKouzu(1/1.01)">−1%</button>
+              <button class="small" onclick="scaleKouzu(1.01)">+1%</button>
+              <button class="small" onclick="scaleKouzu(1.05)">+5%</button>
+            </div>
+            <div class="hint" style="margin-top:6px">地図上の<b>ピンクの丸ハンドル</b>をドラッグで公図を移動。角度・倍率はボタンで調整（自動保存）。<b>緑=ABC(1170-4)の実測境界</b>と重なるように合わせてください。</div>
+          </div>
+          <div class="note" id="kouzuArea" style="margin-top:6px"></div>
         </div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
           <button class="small primary" id="siteAdjBtn" onclick="toggleAdjust()">敷地を調整</button>
@@ -445,24 +467,112 @@ L.control.layers(
   {collapsed:false}
 ).addTo(map);
 
-// 公図スキャン画像を敷地ポリゴンより下・地図タイルより上に重ねるための専用ペイン
+// 公図（ピンク線のみ・背景透過画像）を敷地ポリゴンより下・地図タイルより上に重ねるための専用ペイン
 // （L.imageOverlayをoverlayPane(既定z400)に置くとポリゴンと同じ層で後勝ちになり隠れてしまうため）
 map.createPane('kouzuPane');
 map.getPane('kouzuPane').style.zIndex = 350;
-let kouzuOverlay=null;   // 現在地図に乗っているL.imageOverlay（トグルのたびに作り直す）
+// ── 公図オーバーレイ（画像そのまま・腱さんが位置/角度を手で合わせる） ──
+// 2026-08-19: D/Eのベクトルトレースを3回失敗して撤退（詳細はSITES.hirai.subAreaSetsのコメントとBUGLOG参照）。
+// 腱さん指示「ノイズだらけのフルスキャンでなく、ピンクの線だけ抜いた画像をオブジェクトとして重ねて、位置や
+// 角度は俺が合わせる」に従い、Leaflet標準のimageOverlay（軸並行の矩形のみ・回転不可）ではなく、
+// 3点（左上・右上・左下）のアフィン変換をCSS matrix()で適用する自前の回転可能オーバーレイに作り替えた
+// （Leaflet.ImageOverlay.Rotatedプラグインと同じ手法。追加ライブラリは増やさない）。
+let kouzuImg=null;        // 現在地図に乗っている<img>要素（トグルのたびに作り直す）
+let kouzuNatSize=null;    // {w,h} 画像の実ピクセルサイズ（onloadで取得）
+const kouzuHandleLayer=L.layerGroup().addTo(map);
+function kouzuAdjKey(){ return 'kouteisa_kouzu_adjust_'+CURRENT_SITE; }
+// 初期値はSITE.kouzuPinkの較正結果（既に実測点で検証済みのkouzu_hi.png較正を、この画像の切り抜き位置に
+// 換算したもの＝出発点として妥当な値。SITES.hirai.kouzuPinkのコメント参照）。ただし「初期値」に過ぎず、
+// 腱さんが下のkouzuAdjで自由に上書きしてよい（ドラッグ・角度ボタンで動かした値がlocalStorageに残る）。
+function defaultKouzuAdj(){
+  const k=SITE.kouzuPink;
+  return k ? {lat:k.centerLat, lon:k.centerLon, rot:0, scale:1} : {lat:0,lon:0,rot:0,scale:1};
+}
+function loadKouzuAdj(){
+  try{
+    const v=JSON.parse(localStorage.getItem(kouzuAdjKey()));
+    if(v && typeof v.lat==='number') return v;
+  }catch(e){}
+  return defaultKouzuAdj();
+}
+function saveKouzuAdj(){ try{ localStorage.setItem(kouzuAdjKey(), JSON.stringify(kouzuAdj)); }catch(e){} }
+let kouzuAdj={lat:0,lon:0,rot:0,scale:1};   // 起動時はプレースホルダ。updateKouzuToggleUI()がSITE確定後に必ず上書きする
+let kouzuAdjustMode=false;
 function toggleKouzuOverlay(){
   const chk=document.getElementById('kouzuToggle');
-  if(kouzuOverlay){ map.removeLayer(kouzuOverlay); kouzuOverlay=null; }
-  if(chk && chk.checked && SITE.kouzuOverlay){
-    kouzuOverlay=L.imageOverlay(SITE.kouzuOverlay.url, SITE.kouzuOverlay.bounds, {opacity:0.75, pane:'kouzuPane'}).addTo(map);
+  if(kouzuImg){ L.DomUtil.remove(kouzuImg); kouzuImg=null; kouzuNatSize=null; map.off('move zoom viewreset', redrawKouzuOverlay); }
+  if(chk && chk.checked && SITE.kouzuPink){
+    kouzuImg=L.DomUtil.create('img','kouzu-pink-img', map.getPane('kouzuPane'));
+    kouzuImg.src=SITE.kouzuPink.url;
+    kouzuImg.style.position='absolute';
+    kouzuImg.style.left='0'; kouzuImg.style.top='0';
+    kouzuImg.style.transformOrigin='0 0';
+    kouzuImg.style.opacity='0.9';
+    kouzuImg.style.pointerEvents='none';   // ドラッグは下のハンドルマーカー経由（画像自体は地図操作を邪魔しない）
+    kouzuImg.onload=()=>{ kouzuNatSize={w:kouzuImg.naturalWidth,h:kouzuImg.naturalHeight}; redrawKouzuOverlay(); };
+    map.on('move zoom viewreset', redrawKouzuOverlay);
   }
+}
+// kouzuAdj（中心lat/lon・回転・倍率）から、画像の3隅（左上/右上/左下）が地図上のどのlatlngへ来るかを求め、
+// 現在のズームでの画面px位置へ変換。その3点に画像の自然サイズ(0,0)-(w,0)-(0,h)を写すアフィン行列を求めて
+// CSS matrix(a,b,c,d,e,f)として適用する（Leafletの標準imageOverlay内部実装と同じ「pane基準のlayerPoint」座標系）。
+function redrawKouzuOverlay(){
+  if(!kouzuImg || !kouzuNatSize || !SITE.kouzuPink) return;
+  const {w,h}=kouzuNatSize;
+  const mpp=SITE.kouzuPink.basePxScale*kouzuAdj.scale;   // 1pxあたりの実距離(m)
+  const lat0=kouzuAdj.lat, lon0=kouzuAdj.lon;
+  const mLat=111320, mLon=111320*Math.cos(rad(lat0));
+  const r=rad(kouzuAdj.rot), cr=Math.cos(r), sr=Math.sin(r);
+  function toPx(px,py){
+    // 画像ローカル座標(原点=左上,x→右,y→下)を中心基準の実距離(m)へ（y軸反転＝画像は下向き・地図は北が上）、
+    // 回転してから中心(lat0,lon0)基準のlatlngにし、画面px（layerPoint）へ変換する
+    const x=(px-w/2)*mpp, y=(h/2-py)*mpp;
+    const xr=x*cr-y*sr, yr=x*sr+y*cr;
+    return map.latLngToLayerPoint([lat0+yr/mLat, lon0+xr/mLon]);
+  }
+  const P0=toPx(0,0), P1=toPx(w,0), P2=toPx(0,h);   // 左上・右上・左下 の画面px
+  const a=(P1.x-P0.x)/w, b=(P1.y-P0.y)/w, c=(P2.x-P0.x)/h, d=(P2.y-P0.y)/h;
+  kouzuImg.style.width=w+'px'; kouzuImg.style.height=h+'px';
+  kouzuImg.style.transform=`matrix(${a},${b},${c},${d},${P0.x},${P0.y})`;
+}
+function redrawKouzuHandle(){
+  kouzuHandleLayer.clearLayers();
+  if(!kouzuAdjustMode) return;
+  const html=`<div style="width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.5);border:3px solid #ec4899;box-shadow:0 0 5px #000;cursor:move"></div>`;
+  const h=L.marker([kouzuAdj.lat,kouzuAdj.lon],{icon:L.divIcon({html,className:'dot-icon',iconSize:[20,20],iconAnchor:[10,10]}),draggable:true,autoPan:true,zIndexOffset:2001}).addTo(kouzuHandleLayer);
+  h.bindTooltip('ドラッグで公図を移動',{direction:'top',offset:[0,-10]});
+  h.on('drag',e=>{const ll=e.target.getLatLng(); kouzuAdj.lat=ll.lat; kouzuAdj.lon=ll.lng; redrawKouzuOverlay();});
+  h.on('dragend', saveKouzuAdj);
+}
+function toggleKouzuAdjust(){
+  kouzuAdjustMode=!kouzuAdjustMode;
+  const btn=document.getElementById('kouzuAdjBtn'); if(btn) btn.textContent=kouzuAdjustMode?'調整を終了':'公図を調整';
+  const ctrl=document.getElementById('kouzuCtrl'); if(ctrl) ctrl.style.display=kouzuAdjustMode?'block':'none';
+  redrawKouzuHandle();
+  updateKouzuReadout();
+}
+function rotateKouzu(d){ kouzuAdj.rot=(kouzuAdj.rot+d); saveKouzuAdj(); redrawKouzuOverlay(); updateKouzuReadout(); }
+function scaleKouzu(f){ kouzuAdj.scale=Math.max(0.1,Math.min(10,kouzuAdj.scale*f)); saveKouzuAdj(); redrawKouzuOverlay(); updateKouzuReadout(); }
+function resetKouzuAdj(){
+  kouzuAdj=defaultKouzuAdj(); saveKouzuAdj(); redrawKouzuOverlay(); redrawKouzuHandle(); updateKouzuReadout();
+  if(SITE.kouzuPink) map.panTo([kouzuAdj.lat,kouzuAdj.lon]);
+}
+function updateKouzuReadout(){
+  const el=document.getElementById('kouzuArea'); if(!el) return;
+  if(!SITE.kouzuPink){ el.textContent=''; return; }
+  el.textContent=`公図オーバーレイ：倍率 ${kouzuAdj.scale.toFixed(2)}・角度 ${Math.round(kouzuAdj.rot)}°　${kouzuAdjustMode?'※調整中（自動保存）':''}`;
 }
 function updateKouzuToggleUI(){
   const wrap=document.getElementById('kouzuToggleWrap');
   if(!wrap) return;
-  const has=!!(SITE.kouzuOverlay);
-  wrap.style.display=has?'flex':'none';
-  if(!has && kouzuOverlay){ map.removeLayer(kouzuOverlay); kouzuOverlay=null; }
+  const has=!!(SITE.kouzuPink);
+  wrap.style.display=has?'block':'none';
+  kouzuAdjustMode=false;
+  const ctrl=document.getElementById('kouzuCtrl'); if(ctrl) ctrl.style.display='none';
+  const btn=document.getElementById('kouzuAdjBtn'); if(btn) btn.textContent='公図を調整';
+  kouzuHandleLayer.clearLayers();
+  kouzuAdj=has?loadKouzuAdj():defaultKouzuAdj();
+  updateKouzuReadout();
   const chk=document.getElementById('kouzuToggle');
   // 2026-08-19: D/Eのベクトル化を撤退したため、この画像オーバーレイが隣接筆(1170-1・1404-4)を
   // 見る唯一の手段になった。物件切替のたびにOFFへ戻すと存在に気づきにくいので、対象物件では
@@ -862,10 +972,11 @@ const SITES = {
               // 登記面積へ合わせる拡大・オフセットを重ねて作文／3回目:機械抽出はしたが、細長い帯を
               // モルフォロジー処理が閉領域として捉えきれず、Dの南側へ伸びる部分を欠落させたまま提示。
               // 3回とも腱さんに直接指摘されて発覚＝レビュー未通過のまま出し続けた）。詳細はdocs/BUGLOG.md。
-              // これ以上ベクトル化を推測で埋めるのをやめ、下のkouzuOverlay（公図スキャンの画像オーバーレイ、
-              // 既に実測点で<1mの精度検証済み＝信頼できる）だけを正としてD/Eを表示する。地図上でオーバーレイを
-              // 見れば1170-4・1170-1・1404-4の3筆が公図の描かれたとおりに見える。ベクトルでの区画別面積・
-              // 価格シミュレーションへの算入は、正式な座標求積表付き地積測量図が手に入るまで行わない。
+              // これ以上ベクトル化を推測で埋めるのをやめ、下のkouzuPink（公図の画像オーバーレイ、
+              // 腱さんがドラッグ・角度ボタンで自分で位置合わせできる）だけを正としてD/Eを表示する。
+              // 地図上でオーバーレイを合わせれば1170-4・1170-1・1404-4の3筆が公図の描かれたとおりに見える。
+              // ベクトルでの区画別面積・価格シミュレーションへの算入は、正式な座標求積表付き地積測量図が
+              // 手に入るまで行わない。
             }, subAreaDefault:'ABC', twoSided:false,
             // XY案の分割線の向き（A/B境界の実測ベクトル。B/C境界とも実測差0.12°でほぼ同一直線）。
             // splitSiteByPercent()がこの向きに平行な線で任意の%に敷地を切る（_input/Hirai1298/build_split2.py参照）
@@ -874,12 +985,19 @@ const SITES = {
             // g・adjが一致する時だけgenerateFlat()がこれを使い、毎回のライブAPI取得を省略する
             // （不一致・取得失敗時は既存のライブfetchOne()ループへ自動フォールバック。他物件は対象外）。
             elevCache:{url:'data/hirai_elev_g1.json', g:1, adj:{lat:35.0939428, lon:138.9677039, rot:0, scale:1}},
-            // 平井1170-4公図.pdfを400dpiでラスタ化(4673x6612px)→1/2縮小(2336x3306px)して保存したもの。
-            // 位置合わせは図面右上のグリッド十字(平面直角座標系第VIII系, X=-100650,Y=43000)と
-            // 1:500スケール・A3用紙サイズ(841x1190pt)から算出した0.03175m/pxで検証済み（既知の実測点
-            // K50/K45/K47/K53/R212を逆投影し、公図上の実際の境界線と一致することを確認）。
-            // 回転は北を上とする前提(未補正)。画像4隅のlat/lonは上記変換をそのまま適用したもの。
-            kouzuOverlay:{url:'data/hirai_kouzu.png', bounds:[[35.0933471,138.9669619],[35.0952458,138.9686000]]} }
+            // 公図（腱さんが平井1170-4公図.pdfからピンクの手描き線だけを抽出・背景透過で切り抜いた画像、
+            // data/hirai_kouzu_pink.png、1101×1630px）。2026-08-19：ノイズだらけのフルスキャン画像
+            // オーバーレイ（旧kouzuOverlay、data/hirai_kouzu.png）は「ゴミ」と却下され廃止。この画像を
+            // 腱さんが自分で位置・角度を合わせられる「オブジェクト」として重ねる方式に切替（上のkouzuAdj関連
+            // 関数群を参照）。
+            // basePxScale/centerLat/centerLonは腱さんが動かす前の「初期値」。このファイル単体のピクセル→
+            // 実座標較正は直接やると大きな誤差が出た（過去に3点対応で試みて失敗・破棄）ため、既に実測点で
+            // <1m精度を検証済みのkouzu_hi.png(400dpiフルスキャン、0.03175m/px)の較正を間接的に転用した：
+            // テンプレートマッチングでこの画像がkouzu_hi.png内のどの矩形領域を縮小(scale=0.5002)したものかを
+            // 特定（一致確認済み・目視でもピンクの輪郭が黒い実測線に正確に重なることを確認。
+            // basePxScale=0.03175÷0.5002）。ただしこれはあくまで出発点で、正としない。実際の位置合わせは
+            // 腱さんがkouzuAdj（ドラッグ・角度/倍率ボタン）で行う。
+            kouzuPink:{url:'data/hirai_kouzu_pink.png', basePxScale:0.063475, centerLat:35.0941308, centerLon:138.9676616} }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
