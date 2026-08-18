@@ -10,4 +10,5 @@ logs/
 # 成果物なので例外的に追跡する（docs/task_hirai_elev_cache.md 対応。他のdata/配下は従来どおり非公開）。
 data/*
 !data/hirai_elev_g1.json
+!data/hirai_kouzu.png
 _input/

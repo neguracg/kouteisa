@@ -330,6 +330,10 @@
       <summary class="dsum">敷地（区画図トレース）／位置・角度・倍率の調整</summary>
       <div class="dcont">
         <div class="hint" style="margin-top:0">区画図の緑部分を抽出して配置。調整値はこのブラウザに自動保存され、次回も同じ配置で表示。</div>
+        <div id="kouzuToggleWrap" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:12px">
+          <input type="checkbox" id="kouzuToggle" onchange="toggleKouzuOverlay()">
+          <label for="kouzuToggle" style="cursor:pointer">元の公図スキャンを地図に重ねて表示（位置合わせの確認用）</label>
+        </div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
           <button class="small primary" id="siteAdjBtn" onclick="toggleAdjust()">敷地を調整</button>
           <button class="small" onclick="resetSiteAdj()">配置リセット</button>
@@ -440,6 +444,28 @@ L.control.layers(
   {"陰影起伏図（重ね）":hill,"色別標高図（重ね）":relief},
   {collapsed:false}
 ).addTo(map);
+
+// 公図スキャン画像を敷地ポリゴンより下・地図タイルより上に重ねるための専用ペイン
+// （L.imageOverlayをoverlayPane(既定z400)に置くとポリゴンと同じ層で後勝ちになり隠れてしまうため）
+map.createPane('kouzuPane');
+map.getPane('kouzuPane').style.zIndex = 350;
+let kouzuOverlay=null;   // 現在地図に乗っているL.imageOverlay（トグルのたびに作り直す）
+function toggleKouzuOverlay(){
+  const chk=document.getElementById('kouzuToggle');
+  if(kouzuOverlay){ map.removeLayer(kouzuOverlay); kouzuOverlay=null; }
+  if(chk && chk.checked && SITE.kouzuOverlay){
+    kouzuOverlay=L.imageOverlay(SITE.kouzuOverlay.url, SITE.kouzuOverlay.bounds, {opacity:0.75, pane:'kouzuPane'}).addTo(map);
+  }
+}
+function updateKouzuToggleUI(){
+  const wrap=document.getElementById('kouzuToggleWrap');
+  if(!wrap) return;
+  const has=!!(SITE.kouzuOverlay);
+  wrap.style.display=has?'flex':'none';
+  if(!has && kouzuOverlay){ map.removeLayer(kouzuOverlay); kouzuOverlay=null; }
+  const chk=document.getElementById('kouzuToggle');
+  if(chk) chk.checked=false;   // 物件切替のたびにOFFへ戻す（前物件の画像が残らないように）
+}
 
 const siteLayer       = L.layerGroup().addTo(map);
 const siteHandleLayer = L.layerGroup().addTo(map);
@@ -863,7 +889,13 @@ const SITES = {
             // 標高グリッドの事前キャッシュ（_input/Hirai1298/fetch_elev_cache.py で一度だけオフライン取得）。
             // g・adjが一致する時だけgenerateFlat()がこれを使い、毎回のライブAPI取得を省略する
             // （不一致・取得失敗時は既存のライブfetchOne()ループへ自動フォールバック。他物件は対象外）。
-            elevCache:{url:'data/hirai_elev_g1.json', g:1, adj:{lat:35.0939428, lon:138.9677039, rot:0, scale:1}} }
+            elevCache:{url:'data/hirai_elev_g1.json', g:1, adj:{lat:35.0939428, lon:138.9677039, rot:0, scale:1}},
+            // 平井1170-4公図.pdfを400dpiでラスタ化(4673x6612px)→1/2縮小(2336x3306px)して保存したもの。
+            // 位置合わせは図面右上のグリッド十字(平面直角座標系第VIII系, X=-100650,Y=43000)と
+            // 1:500スケール・A3用紙サイズ(841x1190pt)から算出した0.03175m/pxで検証済み（既知の実測点
+            // K50/K45/K47/K53/R212を逆投影し、公図上の実際の境界線と一致することを確認）。
+            // 回転は北を上とする前提(未補正)。画像4隅のlat/lonは上記変換をそのまま適用したもの。
+            kouzuOverlay:{url:'data/hirai_kouzu.png', bounds:[[35.0933471,138.9669619],[35.0952458,138.9686000]]} }
 };
 let CURRENT_SITE = (function(){ try{ return localStorage.getItem('kouteisa_current_site')||'hannan'; }catch(e){ return 'hannan'; } })();
 let SITE = SITES[CURRENT_SITE] || SITES.hannan;
@@ -1219,6 +1251,7 @@ function switchSite(id){
   SITE=SITES[id];
   siteAdj=loadSiteAdj();
   resetCliffPoints();   // 測線の点を新しい敷地の近くへ戻す（前物件の座標が残る問題の修正）
+  updateKouzuToggleUI();   // 公図スキャン重ね表示：物件ごとに有無が違うのでトグルの表示/非表示とOFFへ戻す
   subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
   if(SITE.splitAxis) applyDeSplitPercent(50);   // XY分割は物件を切り替えるたび50%に戻す
   updateSubAreaToggleUI();
@@ -3096,6 +3129,7 @@ if(!_shared){ map.setView([siteAdj.lat,siteAdj.lon], map.getZoom()); }
 drawSite();
 if(SITE.splitAxis) applyDeSplitPercent(50);
 updateSubAreaToggleUI();
+updateKouzuToggleUI();
 updateFlatSchemeUI();
 flatRef=loadFlatRef();
 drawFlatRef();
