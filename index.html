@@ -272,7 +272,7 @@
         </div>
       </div>
       <button id="subAreaToggleBtn" style="width:100%;margin-top:8px;padding:10px;display:none;text-align:left;border-color:#3b82f6" onclick="toggleSubAreaVariant()"></button>
-      <div id="deAccuracyHint" class="hint" style="display:none;margin-top:4px;color:#e0a458"></div>
+      <div id="deAccuracyHint" style="display:none;margin-top:4px"></div>
       <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px;transition:opacity .15s">
         <div style="font-weight:700;color:#e6edf3;margin-bottom:4px">X/Y 敷地分割</div>
         <div class="hint" style="margin:0 0 6px">X/Y分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）。<b>X区画</b>が主役：ラインを動かすたびに、その時のX区画だけで「使える面積」が最大になる基準点を自動で探して反映します。</div>
@@ -355,6 +355,17 @@
             <div class="hint" style="margin-top:6px">地図上の<b>ピンクの丸ハンドル</b>をドラッグで公図を移動。角度・倍率はボタンで調整（自動保存）。<b>緑=ABC(1170-4)の実測境界</b>と重なるように合わせてください。</div>
           </div>
           <div class="note" id="kouzuArea" style="margin-top:6px"></div>
+        </div>
+        <div id="deExtentWrap" style="display:none;margin-top:8px;font-size:12px">
+          <div>D/E境界の調整（道路側=E・川側=D。動かすと面積が変わります）</div>
+          <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
+            <button class="small" onclick="adjustDeExtent('e',-1)">E縮める</button>
+            <button class="small" onclick="adjustDeExtent('e',1)">E広げる</button>
+            <button class="small" onclick="adjustDeExtent('d',-1)">D縮める</button>
+            <button class="small" onclick="adjustDeExtent('d',1)">D広げる</button>
+            <button class="small" onclick="resetDeExtent()">既定に戻す</button>
+          </div>
+          <div class="note" id="deExtentArea" style="margin-top:4px"></div>
         </div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
           <button class="small primary" id="siteAdjBtn" onclick="toggleAdjust()">敷地を調整</button>
@@ -915,6 +926,34 @@ function polygonArea(pts){
   }
   return Math.abs(a*R*R/2);
 }
+/* ====== D/E（実在の隣接2筆1170-1・1404-4）の座標データ（4回目・確定版） ======
+   過去3回（公図の手描きピンク線から座標を機械抽出しようとした試み）は全て腱さんに「まるで違う」と
+   却下されて2026-08-19に撤退・封印済み（経緯はSITES.hirai.subAreaSetsのコメントとdocs/BUGLOG.mdの
+   2026-08-19の3件を参照）。今回は「ピンク線をどう解釈するか」という不確実な作業そのものを避け、
+   地図タイル上に実在する道路・川・C区画境界をLeafletの地図クリックで直接採取した実座標
+   （map.mouseEventToContainerPoint→containerPointToLatLng→SITE_XFORMの逆変換でABCと同じローカル
+   座標系(x=東/y=北のメートル単位)へ変換。検算済み・詳細はdocs/task_de_geometry_v2.md）を正とする。
+   E＝山頂から道路沿いに外側へ張り出すくさび（北西側）。D＝山頂から川沿いに外側へ張り出すくさび
+   （南東側、南端はB/C角でABC辺と合流）。道路・川とも山頂から遠い区間まで辿ると無関係な部分まで
+   拾って面積が過大になるため、山頂から何点先まで採用するか(eExtent=道路側/dExtent=川側)を腱さんが
+   「D/E境界の調整」ボタンで動かせるようにしてある（applyDeExtent()参照。過去の教訓「面積を単独の
+   正解として合わせにいかない」を踏襲し、登記面積はあくまで目安・最終決定は腱さんの目視調整とする）。 */
+const DE_TIP=[-7.63,49.53];   // 山頂（ABC辺上。D・Eの共通の起点）
+const DE_BC=[16.49,0.79];     // B/C角（ABC辺上。Dが合流する側）
+const DE_ROAD_PTS=[   // 道路沿い（山頂に近い順）。Eのくさびはこの中から何点採用するかをeExtentで調整
+  [10.94,75.96],[0.92,88.42],[-15.20,104.54],[-31.57,120.67],[-51.85,136.79]
+];
+const DE_RIVER_PTS=[   // 川沿い（山頂に近い順）。Dのくさびはこの中から何点採用するかをdExtentで調整
+  [0.68,57.71],[10.94,45.49],[21.08,37.43],[27.06,31.44],[31.95,23.26],[36.10,15.19],[40.01,5.05],[43.19,-5.08]
+];
+// ABC辺のうちD/Eと接する区間（B/C角→山頂の向き。SITES.hirai.subAreaSets.ABCのC区画pts由来、
+// bc/tipは上と重複するので除いた「中間点だけ」）
+const DE_ABC_EDGE_INTERIOR=[[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67]];
+function buildDeE(eExtent){ return [DE_TIP, ...DE_ROAD_PTS.slice(0,eExtent)]; }
+function buildDeD(dExtent){ return [DE_TIP, ...DE_RIVER_PTS.slice(0,dExtent), DE_BC, ...DE_ABC_EDGE_INTERIOR]; }
+// eExtent:2〜5(既定2＝E面積約248㎡、登記251㎡と±1%)／dExtent:2〜8(既定4＝D面積約408㎡、登記466㎡と-12%。
+// 道路と違い川は蛇行が実測しづらくこの程度の差は残る前提＝だからこそ腱さんが調整するUIが要る)。
+function defaultDeExtent(){ return {eExtent:2, dExtent:4}; }
 const SITES = {
   hannan: { id:'hannan', name:'函南 物件（区画図トレース）', anchor:{lat:35.0931148,lon:138.9555981}, targetArea:526, rect:false,
             // 区画図(全体区画図.png)の緑部分をトレースした形状（x=東, y=北 の相対px）
@@ -954,8 +993,8 @@ const SITES = {
             // 平行な1本の線で全体を任意%に分割する代替2区画案（初期値=面積二等分1438.52㎡ずつ。
             // _input/Hirai1298/build_split2.py）。X＝北側（腱さんが買いたい方）が主役、Y＝残る方。
             // 2026-08-18改名：旧「D/E分割」から呼び替え（E→X、D→Yの単純置換。ロジックは無変更）。
-            // ABC⇄XYの2択だけを区画割案ボタンでトグルする（subAreaVariantKeys()は今も'DE'キーを除外する
-            // フィルタを持つが、2026-08-19時点でsubAreaSetsに'DE'は存在しない＝実質no-op。理由は下のコメント）。
+            // ABC⇄XYの2択だけを区画割案ボタンでトグルする（'DE'は実在の隣接2筆で「同じ敷地の分割案」
+            // ではないため、subAreaVariantKeys()が明示的に除外し常設・常時表示扱いにする。理由は下のコメント）。
             subAreaSets:{
               'ABC':[
                 {no:'A区画 999.9㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.11,-15.38]]},
@@ -966,17 +1005,28 @@ const SITES = {
                 {no:'Y区画 1438.5㎡', pts:[[-33.69,23.47],[-33.96,20.05],[-34.92,7.93],[-38.18,1.52],[-6.64,-29.27],[-3.01,-32.85],[-0.97,-34.83],[0.24,-32.51],[1.33,-30.12],[2.3,-27.69],[3.13,-25.2],[3.57,-23.75],[4.21,-21.38],[4.93,-19.03],[5.73,-16.71],[6.2,-15.47],[6.61,-14.42],[9.08,-9.7],[10.15,-8.1],[-28,29.13],[-33.64,24.15]]},
                 {no:'X区画 1438.5㎡', pts:[[10.15,-8.1],[10.51,-7.56],[11.94,-5.42],[13.45,-3.34],[16.49,0.79],[20.25,5.89],[21.7,8.15],[22.11,9.24],[22.41,10.36],[23.39,19.25],[21.83,20.76],[12.71,29.67],[-7.63,49.53],[-9.87,47.25],[-20.04,36.45],[-21.57,34.81],[-28,29.13]]}
               ],
-              // ── D/E（実在の隣接2筆1170-1・1404-4）のベクトル化は【2026-08-19時点で撤退・封印】 ──
-              // 公図(_input/Hirai1298/平井1170-4公図.pdf)の手描きピンク線から座標を起こそうと3回試みたが、
-              // 毎回、腱さんが見るとまるで違う（1回目:色検出の断片から形を推測して破綻／2回目:さらに
-              // 登記面積へ合わせる拡大・オフセットを重ねて作文／3回目:機械抽出はしたが、細長い帯を
-              // モルフォロジー処理が閉領域として捉えきれず、Dの南側へ伸びる部分を欠落させたまま提示。
-              // 3回とも腱さんに直接指摘されて発覚＝レビュー未通過のまま出し続けた）。詳細はdocs/BUGLOG.md。
-              // これ以上ベクトル化を推測で埋めるのをやめ、下のkouzuPink（公図の画像オーバーレイ、
-              // 腱さんがドラッグ・角度ボタンで自分で位置合わせできる）だけを正としてD/Eを表示する。
-              // 地図上でオーバーレイを合わせれば1170-4・1170-1・1404-4の3筆が公図の描かれたとおりに見える。
-              // ベクトルでの区画別面積・価格シミュレーションへの算入は、正式な座標求積表付き地積測量図が
-              // 手に入るまで行わない。
+              // ── D/E（実在の隣接2筆1170-1・1404-4）：4回目の試みでようやく成立（2026-08-19） ──
+              // 【過去3回の失敗（消さず記録。詳細docs/BUGLOG.md）】公図(_input/Hirai1298/平井1170-4公図.pdf)
+              // の手描きピンク線から座標を起こそうと3回試みたが、毎回、腱さんが見るとまるで違う
+              // （1回目:色検出の断片から形を推測して破綻／2回目:さらに登記面積へ合わせる拡大・オフセットを
+              // 重ねて作文／3回目:機械抽出はしたが、細長い帯をモルフォロジー処理が閉領域として捉えきれず、
+              // Dの南側へ伸びる部分を欠落させたまま提示）。3回とも腱さんに直接指摘されて発覚＝レビュー
+              // 未通過のまま出し続けた。この反省から一度は封印し、kouzuPink（公図の画像オーバーレイを
+              // 腱さんが手動で位置合わせする方式）だけを正とする運用に切り替えていた。
+              // 【4回目・今回はなぜ成立するか】過去3回は共通して「公図の手描きピンク線をどう解釈するか」
+              // という不確実な作業だった。今回はこれを完全に避け、地図タイル上に実在する道路・川・
+              // C区画境界をLeafletの地図クリックで直接採取した実座標（DE_TIP/DE_BC/DE_ROAD_PTS/
+              // DE_RIVER_PTS/DE_ABC_EDGE_INTERIOR、buildDeE/buildDeD＝polygonArea()の直前で定義。
+              // 検算・詳細はdocs/task_de_geometry_v2.md）を正とする。道路・川は山頂に近い区間だけを
+              // 採用し、どこまで採用するかはeExtent/dExtentとして腱さんが「D/E境界の調整」ボタンで
+              // 調整する（applyDeExtent()が唯一の書き込み元。過去の教訓「面積を単独の正解として
+              // 合わせにいかない」は今回も踏襲し、登記面積は目安・最終決定は腱さんの目視調整とする）。
+              // 下のpts/no（㎡表記）は既定値(eExtent=2/dExtent=4)のプレースホルダで、XY案と同じパターンで
+              // 起動時に必ずapplyDeExtent()が正確な面積の表記へ上書きする。
+              'DE':[
+                {no:'D区画 約408㎡', pts:buildDeD(defaultDeExtent().dExtent)},
+                {no:'E区画 約248㎡', pts:buildDeE(defaultDeExtent().eExtent)}
+              ],
             }, subAreaDefault:'ABC', twoSided:false,
             // XY案の分割線の向き（A/B境界の実測ベクトル。B/C境界とも実測差0.12°でほぼ同一直線）。
             // splitSiteByPercent()がこの向きに平行な線で任意の%に敷地を切る（_input/Hirai1298/build_split2.py参照）
@@ -1101,7 +1151,10 @@ function updateSubAreaToggleUI(){
   if(accHint){
     const showAcc=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
     accHint.style.display=showAcc?'block':'none';
-    if(showAcc) accHint.textContent='⚠ D/E（1170-1・1404-4）は公図の手描き線をそのままトレースしたもので、面積は登記と一致しません（D 344㎡/登記466㎡・E 227㎡/登記251㎡）。位置と形の参考用です。正式な地積測量図が入手でき次第、座標を差し替え予定。';
+    // 文言はdeAccuracyHintHTML()（唯一の正本）から取得する。以前はここに同内容を直書きしており、
+    // 「正本はここ1箇所」というdeAccuracyHintHTML()側のコメントと実装が食い違っていた
+    // （2026-08-19発見・BUGLOG参照）。
+    if(showAcc) accHint.innerHTML=deAccuracyHintHTML();
   }
   // X/Y分割パネルは「今ABCやDEを見ているから無関係」なだけで、display:noneで消すとブロックの出現/消失で
   // 画面全体を把握しづらくなる（ユーザー指摘・設計ポリシー化）。常に置いたままグレーアウトで無効化する。
@@ -1279,6 +1332,71 @@ function drawSubAreaDE(){
       html:`<div style="font:700 11px/1.2 sans-serif;color:${col};background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(subAreaLayer);
   });
 }
+/* ====== D/E境界の調整（eExtent/dExtent）======
+   kouzuAdj（localStorage保存＋ボタンUIで腱さんが手動調整、docs/上のコメント参照）と
+   applyDeSplitPercent()（パラメータからsubAreaSets.XYを動的に再生成）の2つの合成。
+   道路側=E・川側=Dの「くさびの深さ（山頂から何点先まで採用するか）」を腱さんがボタンで動かし、
+   実際の面積に合わせる（座標データ本体・buildDeE/buildDeDはpolygonArea()の直前で定義）。 */
+function deExtentKey(){ return 'kouteisa_de_extent_'+CURRENT_SITE; }
+function loadDeExtent(){
+  try{
+    const v=JSON.parse(localStorage.getItem(deExtentKey()));
+    if(v && typeof v.eExtent==='number' && typeof v.dExtent==='number') return v;
+  }catch(e){}
+  return defaultDeExtent();
+}
+function saveDeExtent(){ try{ localStorage.setItem(deExtentKey(), JSON.stringify(deExtent)); }catch(e){} }
+let deExtent=defaultDeExtent();   // 起動時はプレースホルダ。updateDeExtentUI()がSITE_XFORM確定後に必ず上書きする
+// eExtent/dExtentから SITE.subAreaSets.DE を再生成する（唯一の書き込み元）。面積はABC/XYと同じ
+// trueAreaOfPts()（=polygonArea(shapeToLatLngs(pts,SITE_XFORM))）で算出しnoラベルへ埋め込む
+// （deSubAreaPolys/drawSubAreaDE/priceSimGroups等の既存の消費側はSITE.subAreaSets.DEを見るだけで
+// 変更不要）。SITE_XFORM確定後（drawSite()の後）に呼ぶこと。DE座標を持たない物件では何もしない。
+function applyDeExtent(){
+  if(!(SITE.subAreaSets && SITE.subAreaSets.DE)) return;
+  const dPts=buildDeD(deExtent.dExtent), ePts=buildDeE(deExtent.eExtent);
+  const areaD=trueAreaOfPts(dPts), areaE=trueAreaOfPts(ePts);
+  SITE.subAreaSets.DE=[
+    {no:`D区画 ${areaD.toFixed(0)}㎡`, pts:dPts},
+    {no:`E区画 ${areaE.toFixed(0)}㎡`, pts:ePts}
+  ];
+}
+// 調整パネルの面積表示＋価格シミュレーションの内訳表をリアルタイムに追従させる（唯一の更新経路）
+function updateDeExtentReadout(){
+  const el=document.getElementById('deExtentArea');
+  const de=SITE.subAreaSets && SITE.subAreaSets.DE;
+  if(el) el.textContent = de ? de.map(s=>s.no).join('　／　')+`　（E:道路沿い${deExtent.eExtent}点・D:川沿い${deExtent.dExtent}点）` : '';
+  renderPriceSim();
+}
+// E縮める/E広げる/D縮める/D広げるボタン。rotateKouzu/scaleKouzuと同型：クランプ→データ再生成→
+// 再描画→保存→表示更新の順で行う。
+function adjustDeExtent(which, delta){
+  if(which==='e') deExtent.eExtent=Math.max(2,Math.min(5, deExtent.eExtent+delta));
+  else deExtent.dExtent=Math.max(2,Math.min(8, deExtent.dExtent+delta));
+  applyDeExtent();
+  drawSubAreaDE();
+  saveDeExtent();
+  updateDeExtentReadout();
+}
+function resetDeExtent(){
+  deExtent=defaultDeExtent();
+  applyDeExtent();
+  drawSubAreaDE();
+  saveDeExtent();
+  updateDeExtentReadout();
+}
+// 調整パネルの表示/非表示・初期ロード。物件切替・初期化のたびに呼ぶ（updateKouzuToggleUI()と対、
+// 判定条件もkouzuToggleWrapのhas判定と同じSITE.subAreaSets && SITE.subAreaSets.DE）。
+// SITE_XFORM確定後（drawSite()の後）に呼ぶこと＝applyDeExtent()がtrueAreaOfPts()経由でSITE_XFORMを使うため。
+function updateDeExtentUI(){
+  const wrap=document.getElementById('deExtentWrap');
+  const has=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
+  if(wrap) wrap.style.display=has?'block':'none';
+  if(!has) return;
+  deExtent=loadDeExtent();
+  applyDeExtent();
+  drawSubAreaDE();
+  updateDeExtentReadout();
+}
 function redrawSitePolygon(){
   siteLayer.clearLayers();
   siteLatLngs=buildSite();
@@ -1352,10 +1470,19 @@ function switchSite(id){
   try{ localStorage.setItem('kouteisa_current_site',id); }catch(e){}
   SITE=SITES[id];
   siteAdj=loadSiteAdj();
+  // trueAreaOfPts()（applyDeSplitPercent/applyDeExtentが使う）はSITE_XFORMを要求するため、正式な
+  // drawSite()より前にここで一度確定させておく（buildSite()はSITE.shape/siteAdjだけの純計算＋
+  // SITE_XFORM設定という副作用のみで、描画はしない。下のdrawSite()が同じ入力から再計算するので
+  // 二重計算だが無害＝新物件のSITE.shape/siteAdjはこの後変わらない）。
+  buildSite();
   resetCliffPoints();   // 測線の点を新しい敷地の近くへ戻す（前物件の座標が残る問題の修正）
   updateKouzuToggleUI();   // 公図スキャン重ね表示：物件ごとに有無が違うのでトグルの表示/非表示とOFFへ戻す
   subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
   if(SITE.splitAxis) applyDeSplitPercent(50);   // XY分割は物件を切り替えるたび50%に戻す
+  // D/E境界調整パネル：SITE_XFORM確定後（上のbuildSite()の後）に呼ぶこと。物件ごとに有無が違うので
+  // 表示/非表示とeExtent/dExtentの復元を行う。updateSubAreaToggleUI()（#deAccuracyHintの文言を
+  // SITE.subAreaSets.DEから生成する）より前に置き、新物件の値が確定してから読ませる。
+  updateDeExtentUI();
   updateSubAreaToggleUI();
   clearBand();      // 帯・セル・結果をリセット
   clearFlat();      // 平坦度グリッド・結果をリセット
@@ -2284,9 +2411,15 @@ function hsrcNoteText(){
 // DE（実在の隣接2筆 1170-1/1404-4）がこの物件にある時は常に出す精度注意書き（正本はここ1箇所。
 // 表示箇所は複数：updateSubAreaToggleUI()の#deAccuracyHint、区画別内訳の「隣接筆（D/E）」見出し直下）。
 // 精度を偽って見せないための表示。DEは常設（案の選択subAreaVariantに関わらず出る）なので、この関数の
-// 条件もSITEにDEがあるかどうかだけで判定する。
+// 条件もSITEにDEがあるかどうかだけで判定する。現在の面積はSITE.subAreaSets.DE（applyDeExtent()が
+// 唯一の書き込み元）から動的に取得する。固定文言に数値を焼き込まない＝正規化の原則（2026-08-19、
+// 4回目の実座標トレースで復活。過去3回の公図ピンク線トレース失敗の経緯はSITES.hirai.subAreaSetsの
+// コメント参照）。
 function deAccuracyHintHTML(){
-  return (SITE.subAreaSets && SITE.subAreaSets.DE) ? `<div class="hint" style="color:#e0a458;margin:2px 0 6px">⚠ D/E（1170-1・1404-4）は公図の手描き線をそのままトレースしたもので、面積は登記と一致しません（D 344㎡/登記466㎡・E 227㎡/登記251㎡）。位置と形の参考用です。正式な地積測量図が入手でき次第、座標を差し替え予定。</div>` : '';
+  const de=SITE.subAreaSets && SITE.subAreaSets.DE;
+  if(!de) return '';
+  const areaText=de.map(s=>s.no).join('／');
+  return `<div class="hint" style="color:#e0a458;margin:2px 0 6px">⚠ D/E（1170-1・1404-4）は道路・川・C区画境界から実測トレースした形状です（現在 ${areaText}）。山側の川の蛇行までは追えないため登記面積（D466㎡/E251㎡）と数%ずれます。下の「D/E境界の調整」ボタンで実際の面積に合わせてください。</div>`;
 }
 // スキームに応じて結果パネルを描画するディスパッチャ（呼び出し元はスキームを意識しない）
 function computeFlatAreas(){
@@ -3230,6 +3363,7 @@ subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAr
 if(!_shared){ map.setView([siteAdj.lat,siteAdj.lon], map.getZoom()); }
 drawSite();
 if(SITE.splitAxis) applyDeSplitPercent(50);
+updateDeExtentUI();   // D/E境界調整パネル（SITE_XFORM確定後＝drawSite()の後に呼ぶこと）
 updateSubAreaToggleUI();
 updateKouzuToggleUI();
 updateFlatSchemeUI();
