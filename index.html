@@ -264,16 +264,24 @@
           <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
         </div>
         <button id="flatComputeBtn" class="primary" style="width:100%;margin-top:8px" onclick="generateFlat()">平坦度を計算</button>
+        <!-- 高い面ブロック（新規）。purchaseSetsを持つ物件だけ表示。常にC+D+Eが対象＝区画割案(ABC/XY)非連動 -->
+        <div id="planeHighBlock" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
+          <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:2px">高い面</div>
+          <div class="hint" style="margin:0 0 6px">購入予定の区画セット<b>C+D+E</b>だけで、使える面積が最大になる基準点を探します。今ABC/XYどちらの区画割案を見ていても関係なく、常にC+D+Eが対象です。</div>
+          <button class="small primary" id="planeHighBtn" style="width:100%" onclick="optimizePlaneForPurchaseSet('CDE')">📍 C+D+Eで使える面積が最大になる基準点を自動選択</button>
+        </div>
+
+        <!-- 低い面の見出し（新規・ラベルのみ）。直後の既存ボタン(optimizeRegionSel + 自動選択ボタン)は無変更 -->
+        <div id="planeLowLabel2" style="display:none;margin-top:8px;font-weight:700;color:#e6edf3;font-size:12px">低い面</div>
         <select id="optimizeRegionSel" style="width:100%;margin-top:8px;display:none;padding:3px"></select>
         <button class="small" style="width:100%;margin-top:6px" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button>
-        <div id="planesPanel" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
-          <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:2px">基準面（2面まで）</div>
-          <div class="hint" style="margin:0 0 6px">上のボタンで決めた面が<b>低い面</b>になります。下のボタンで<b>高い面</b>（C+D+E側の高い平場）を決めると、2面構成の表が出ます。地図の色分けは選んだ面のものを表示します。</div>
-          <button class="small" id="planeHighBtn" style="width:100%" onclick="optimizePlaneForPurchaseSet('CDE')">📍 C+D+E で使える面積が最大になる基準点を自動選択（高い面）</button>
-          <div style="display:flex;gap:10px;align-items:center;margin-top:8px;font-size:12px;flex-wrap:wrap">
-            <span class="muted" style="font-size:11px">地図に表示</span>
-            <label style="cursor:pointer"><input type="radio" name="activePlane" value="low" onchange="activatePlane('low')"> 低い面 <span id="planeLowLabel" class="muted"></span></label>
-            <label style="cursor:pointer"><input type="radio" name="activePlane" value="high" onchange="activatePlane('high')"> 高い面 <span id="planeHighLabel" class="muted"></span></label>
+
+        <!-- 面の切替（新規）。ラジオではなく横並びボタン2つ。区画割案トグル(subAreaToggleBtn)と似た見た目でよい -->
+        <div id="planeToggleWrap" style="display:none;margin-top:8px">
+          <div class="muted" style="font-size:11px;margin-bottom:4px">地図・結果に表示する面</div>
+          <div style="display:flex;gap:6px">
+            <button id="planeBtnLow" class="small" style="flex:1" onclick="activatePlane('low')">低い面<br><span id="planeBtnLowElev" style="font-weight:400;font-size:10px"></span></button>
+            <button id="planeBtnHigh" class="small" style="flex:1" onclick="activatePlane('high')">高い面<br><span id="planeBtnHighElev" style="font-weight:400;font-size:10px"></span></button>
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
@@ -2120,8 +2128,9 @@ function optimizeFlatRef(){
 // FLAT_PLANES.highへ設定する。既存のbestRefForRegion()はregionPts（ABCのローカル座標＋SITE_XFORM）
 // 前提でD/Eには使えないため、より下位の正本bestUsableAreaForCells()（セル集合＋しきい値）を直接使う。
 // 「実在の標高点へ丸める」処理はbestRefForRegion()と同じ考え方を踏襲。
-function optimizePlaneForPurchaseSet(setKey){
+async function optimizePlaneForPurchaseSet(setKey){
   if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  if(flatGridSig()!==FLAT_GRID_SIG){ await generateFlat(); }   // 2026-08-19追加：D/E変更後の陳腐化グリッドで最適化しない
   const polys=purchaseSetPolys(setKey);
   if(!polys.length){ alert('対象区画が見つかりません。'); return; }
   const usableM=currentUsableM();
@@ -2133,10 +2142,6 @@ function optimizePlaneForPurchaseSet(setKey){
   FLAT_PLANES.high={lat:bestCell.lat, lon:bestCell.lon, elev:bestCell.elev};
   activatePlane('high');   // 内部でflatRef差替え・保存・recomputeFlatOnly()（drawFlat()まで）・updatePlanesUI()まで行う
   const prog=document.getElementById('flatProg');
-  // 表示する面積は、下の「2面構成」の表と同じ土俵に揃える＝格子の素の合計(best.area)ではなく、
-  // 実測図の面積へ正規化した値(usableAreaOfLL、既存関数)を使う。best.areaは「どの標高が最大か」を
-  // 選ぶための内部スコアであって表示用の値ではない（素の値だと表と1%弱ずれて別物に見える）。
-  // activatePlane()済みなのでc.dhは既にこの高い面基準＝usableAreaOfLLがそのまま使える。
   const shownArea=polys.reduce((s,p)=>s+(usableAreaOfLL(p.latlngs, usableM)||0), 0);
   if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／高い面）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${shownArea.toFixed(0)}㎡が最大`;
   updatePlanesUI();
@@ -2719,51 +2724,6 @@ function cutFillBodyHTML(r){
   const combined=[0,1,2,3].map(i=> r.cut[i]+r.fill[i]);   // 面積表は切土/盛土を合算
   return volLine + cutFillAreaTableHTML(combined);
 }
-// 各セルを「低い面で使える／高い面で使える／どちらでもない」に排他的に振り分ける。
-// 両方の面で使える場合は近い方の面に入れる（二重計上を防ぐ＝合計が実面積を超えない）。
-// 戻り値は㎡（regionAreaScaleで実測図の面積へ正規化。既存のtallyCutFill等と同じ流儀）。
-function twoPlaneAreas(latlngs, thM){
-  if(!FLAT_GRID) return null;
-  const cellArea=FLAT_GRID.g*FLAT_GRID.g;
-  const lo=FLAT_PLANES.low, hi=FLAT_PLANES.high;
-  let inside=0, aLow=0, aHigh=0;
-  FLAT_GRID.cells.forEach(c=>{
-    if(!pointInLLPoly(c.lat,c.lon,latlngs)) return;
-    inside+=cellArea;
-    if(c.elev==null) return;
-    const dLo = lo ? Math.abs(c.elev-lo.elev) : Infinity;
-    const dHi = hi ? Math.abs(c.elev-hi.elev) : Infinity;
-    const okLo = dLo<=thM, okHi = dHi<=thM;
-    if(okLo && okHi){ if(dLo<=dHi) aLow+=cellArea; else aHigh+=cellArea; }
-    else if(okLo) aLow+=cellArea;
-    else if(okHi) aHigh+=cellArea;
-  });
-  const k=regionAreaScale(trueAreaOfLL(latlngs), inside);
-  return {low:aLow*k, high:aHigh*k, total:(aLow+aHigh)*k, area:trueAreaOfLL(latlngs)};
-}
-// 2面構成の表（購入シナリオを持つ物件だけ）。低い面・高い面が両方設定されている時のみ出す。
-function twoPlaneTableHTML(){
-  if(!SITE.purchaseSets || !FLAT_GRID) return '';
-  if(!FLAT_PLANES.low || !FLAT_PLANES.high) {
-    return `<div class="hint" style="margin:8px 0 4px;color:#e0a458">2面構成の表を出すには、上の「低い面」「高い面」の両方を設定してください。</div>`;
-  }
-  const thM=currentUsableM();
-  const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
-  let html=`<div style="margin:10px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">2面構成で使える面積（±${Math.round(thM*100)}cm以内・面ごとに排他集計）</div>`;
-  html+=`<table class="ftab"><tr><th>区画</th><th>低い面 ${FLAT_PLANES.low.elev.toFixed(1)}m<br>㎡（坪）</th><th>高い面 ${FLAT_PLANES.high.elev.toFixed(1)}m<br>㎡（坪）</th><th>合計<br>㎡（坪）</th></tr>`;
-  Object.keys(SITE.purchaseSets).forEach(setKey=>{
-    const polys=purchaseSetPolys(setKey);
-    let sLow=0,sHigh=0;
-    polys.forEach(p=>{
-      const r=twoPlaneAreas(p.latlngs, thM);
-      sLow+=r.low; sHigh+=r.high;
-      html+=`<tr><td class="l">${p.no.split(/\s+/)[0]}</td><td>${f(r.low)}（${t(r.low)}）</td><td>${f(r.high)}（${t(r.high)}）</td><td>${f(r.low+r.high)}（${t(r.low+r.high)}）</td></tr>`;
-    });
-    html+=`<tr style="border-top:2px solid #3b82f6;background:#132436;font-weight:700;color:#e6edf3"><td class="l">${SITE.purchaseSets[setKey].label} 合計</td><td>${f(sLow)}（${t(sLow)}）</td><td>${f(sHigh)}（${t(sHigh)}）</td><td>${f(sLow+sHigh)}（${t(sLow+sHigh)}）</td></tr>`;
-  });
-  html+=`</table><div class="hint" style="margin-top:2px">同じ場所が両方の面で使える場合は<b>近い方の面だけ</b>に計上します（二重計上なし＝合計は実面積を超えません）。</div>`;
-  return html;
-}
 function computeFlatAreasCutFill(el){
   const all=tallyCutFill(pointInSite, siteTrueAreaM2());
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`
@@ -2780,7 +2740,6 @@ function computeFlatAreasCutFill(el){
     html+=`<div style="margin:8px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">隣接筆（D/E）</div>`+deAccuracyHintHTML();
     des.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
   }
-  html+=twoPlaneTableHTML();   // 2面構成（低い面/高い面）の表。購入シナリオを持つ物件だけ中身が出る
   html+=`<div style="margin-top:6px">`+
     `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
     `<span class="src">土量は基準面との標高差×格子面積の単純合計による概算です。法面形状・締固め・場外搬出入は考慮していません。切土/盛土量の差引は良否判定に使わず、規模の目安としてご確認ください。`
@@ -2958,21 +2917,31 @@ function updateFlatComputeBtnState(){
   btn.textContent = ready ? '平坦度を計算　（取得済み・基準点の変更は自動反映されます）' : '平坦度を計算';
   updatePlanesUI();
 }
-// 基準面パネル（低い面／高い面）の表示を、現在のFLAT_PLANES/ACTIVE_PLANEに同期する。
-// SITE.purchaseSetsを持つ物件（現状は平井のみ）だけ表示、それ以外は物件切替のたびに自動で隠れる。
+// 基準面パネル（高い面ブロック／低い面ラベル／切替ボタン）の表示を、現在のFLAT_PLANES/ACTIVE_PLANEに
+// 同期する。SITE.purchaseSetsを持つ物件（現状は平井のみ）だけ表示。
 function updatePlanesUI(){
-  const panel=document.getElementById('planesPanel');
-  if(!panel) return;
+  const highBlock=document.getElementById('planeHighBlock');
+  const lowLabel=document.getElementById('planeLowLabel2');
+  const toggleWrap=document.getElementById('planeToggleWrap');
   const has=!!SITE.purchaseSets;
-  panel.style.display = has ? 'block' : 'none';
-  if(!has) return;
-  const lowLbl=document.getElementById('planeLowLabel'), highLbl=document.getElementById('planeHighLabel');
-  if(lowLbl) lowLbl.textContent = FLAT_PLANES.low ? `（${FLAT_PLANES.low.elev.toFixed(1)}m）` : '（未設定）';
-  if(highLbl) highLbl.textContent = FLAT_PLANES.high ? `（${FLAT_PLANES.high.elev.toFixed(1)}m）` : '（未設定）';
-  document.querySelectorAll('input[name="activePlane"]').forEach(r=>{
-    r.checked = (r.value===ACTIVE_PLANE);
-    r.disabled = !FLAT_PLANES[r.value];
-  });
+  if(highBlock) highBlock.style.display = has?'block':'none';
+  if(lowLabel) lowLabel.style.display = has?'block':'none';
+  if(!has){ if(toggleWrap) toggleWrap.style.display='none'; return; }
+
+  const btnLow=document.getElementById('planeBtnLow'), btnHigh=document.getElementById('planeBtnHigh');
+  const elevLow=document.getElementById('planeBtnLowElev'), elevHigh=document.getElementById('planeBtnHighElev');
+  const bothSet = !!(FLAT_PLANES.low && FLAT_PLANES.high);
+  if(toggleWrap) toggleWrap.style.display = bothSet ? 'block' : 'none';
+  if(btnLow){
+    btnLow.disabled = !FLAT_PLANES.low;
+    btnLow.classList.toggle('primary', ACTIVE_PLANE==='low');
+  }
+  if(btnHigh){
+    btnHigh.disabled = !FLAT_PLANES.high;
+    btnHigh.classList.toggle('primary', ACTIVE_PLANE==='high');
+  }
+  if(elevLow) elevLow.textContent = FLAT_PLANES.low ? `${FLAT_PLANES.low.elev.toFixed(1)}m` : '未設定';
+  if(elevHigh) elevHigh.textContent = FLAT_PLANES.high ? `${FLAT_PLANES.high.elev.toFixed(1)}m` : '未設定';
 }
 ['fFlatCm','fGradeCm','fSteepCm','fContour'].forEach(id=>{
   const elx=document.getElementById(id);

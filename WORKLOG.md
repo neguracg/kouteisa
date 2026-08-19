@@ -1028,3 +1028,75 @@ hiraiの保存済み低い面/高い面が消える）ことをブラウザ実�
   修正はせず上記BUGLOG行に記録のみ（ヨコテン:0件＝今回の機能追加で新たに修正すべき箇所はこれ以外
   無かった、の意）。
 - 指示書`docs/task_two_planes.md`は完了につき削除。
+
+## 2026-08-19 基準面（低い面／高い面）UIの作り直し（腱さん実機指摘への対応）
+
+直前のコミット(527f4ff)の「低い面／高い面」2面切替UIについて、腱さんが実機で「バグってる」
+「タイトル(基準面（2面まで）)が意味不明」「CDEボタンを押しても反応してなくない？」「高い面が
+低い面に近い見た目」と指摘。指示書`docs/task_two_planes_redo.md`（オーケストレータが事前に
+ブラウザ実測で診断し、`optimizePlaneForPurchaseSet()`にグリッド鮮度チェックが無いという設計上の
+穴を発見済み）に従い、UIを全面的に作り直した。カイシュウ4問は指示書内で回答済み（①`updatePlanesUI()`
+が唯一のUI同期関数／②`updateSubAreaToggleUI()`が近い前例だがサイクル型でなく選択型を採用／
+③引っ越しでない／④527f4ffのデータモデル(FLAT_PLANES/ACTIVE_PLANE/activatePlane())は健全と判断し維持）。
+
+- **HTML**：`#planesPanel`（1ブロック・ラジオ切替・「基準面（2面まで）」という意味不明なタイトル）を
+  撤去し、`#planeHighBlock`（上・常にC+D+E対象と明記）／`#planeLowLabel2`+既存の`optimizeRegionSel`+
+  `optimizeFlatRef()`ボタン（下・**一切無変更**）／`#planeToggleWrap`（横並びボタン2つ、区画割案
+  ABC⇄XYトグルと同系統の見た目）の3ブロックへ再構成。既存の低い面ボタン（区画セレクト込み）は
+  文字どおり1バイトも変えていない（Edit差分で確認済み）。
+- **JS**：`updatePlanesUI()`を書き換え。ラジオのchecked/disabledではなく、`#planeBtnLow`/
+  `#planeBtnHigh`の`disabled`と`classList.toggle('primary', ACTIVE_PLANE===...)`で選択中を表現。
+  両方の面が揃うまで`#planeToggleWrap`自体を非表示にする設計（＝未設定の面のボタンを押せてしまう
+  状態は構造的に発生しない）。`activatePlane()`は無変更で流用。
+- **2面構成の表を完全撤去**：`twoPlaneAreas()`・`twoPlaneTableHTML()`を関数ごと削除、
+  `computeFlatAreasCutFill()`内の呼び出し1行も削除。「隣接筆（D/E）」内訳セクションは
+  `flatRef`（＝アクティブな面）を経由して自動追従する設計のため無変更（指示書の指摘どおり）。
+- **防御修正**：`optimizePlaneForPurchaseSet()`を`async`化し、先頭で
+  `if(flatGridSig()!==FLAT_GRID_SIG){ await generateFlat(); }` を追加。D/Eを動かした直後に
+  平坦度を再計算せず高い面ボタンを押しても、陳腐化したグリッドで計算しない（詳細はBUGLOG参照）。
+
+### 検証（ブラウザ実機、python -m http.server 8934。検証後サーバー停止・タブも閉じ済み）
+**重要な発見（このワーカー環境固有の罠）**：`navigate`で同一URLへ再アクセスすると、`force:true`を
+付けても編集直後のindex.htmlではなく**ブラウザの disk cache 由来と思われる古い内容**が読み込まれる
+現象を実測した（DOM上のid一式が旧`planesPanel`/`planeHighBtn`のままで、同時に行った
+`fetch('/index.html',{cache:'no-store'})`は新内容を返す、という食い違いで確定。ページのJS実行
+コンテキストも使い回されていた形跡あり＝`const`の再宣言エラーが最初から発生）。`?cb=<値>`という
+クエリ文字列を付けて`navigate`することで確実に新内容へ強制できた。**この現象自体が、前回のコミットで
+「DOM操作ベースの検証で動いていると判断したのに実機で不具合が出た」ことの一因だった可能性がある**
+（検証者が気づかないまま古いページを検証していた、という筋。ただし前回ワーカーの実際のログは未確認
+のため推測に留める）。オーケストレータが自分のブラウザで確認する際も、キャッシュ起因で編集前の
+見た目が出ないよう、ハード再読み込み（またはURLにクエリを1つ足す）を推奨する。
+
+- 平井：`#planeHighBlock`（高い面・上）→`#planeLowLabel2`+既存ボタン（低い面・下）の順で表示、
+  高い面ブロックの説明文に「C+D+Eだけ・ABC/XYどちらの区画割案でも無関係」の文言があることを
+  `get_page_text`で確認。
+- 低い面ボタン（既存・無回帰）：区画セレクトで「A区画を最適化」を選び実行→
+  「自動選択（A区画）：基準標高21.5m→使える面積...595㎡」を確認、`ACTIVE_PLANE`が'low'に、
+  `FLAT_PLANES.low`が更新されることを確認（区画セレクトを含め機能・文言とも従来どおり）。
+- 高い面ボタン：クリックで`FLAT_PLANES.high`設定、地図の基準ラベル（Leaflet上の「基準（道路）標高」
+  テキスト）が実際に23.4m→切替後の値に変わること、結果パネルの「隣接筆（D/E）」内訳の数値も
+  低い面時と高い面時で異なる値（例: D区画の地ならし坪数が高い面15.7→低い面3.1）になることを
+  `flatResult`のtextContentで比較確認（＝地図・結果パネルの両方が切り替わる、を実測で裏付け）。
+- **鮮度チェックの本丸**：D区画の「面積で指定」欄(`deTargetArea_D`)を466→900に変更（`input`
+  イベント経由、`deRegionAdj.D.scale`が実際に変化し`flatGridSig()`が`FLAT_GRID_SIG`と不一致になる
+  ことを確認）→**平坦度を計算し直さず**に高い面ボタンを`dispatchEvent(MouseEvent)`でクリック→
+  クリック後に`FLAT_GRID_SIG`が新しい（D拡大後の）シグネチャへ更新され、`flatGridSig()===FLAT_GRID_SIG`
+  が真になり、セル数も2337→2508に変化していることを確認（＝古いグリッドを黙って使い続けてはいない。
+  4番の防御修正が実際に発火して機能していることの直接証拠）。
+- 横並びボタン：両方の面が揃うと`#planeToggleWrap`が`block`に、片方だけだと`none`のまま
+  （＝未設定側を押せる状態が構造的に存在しないことを確認）。低い面⇄高い面を`dispatchEvent`で
+  交互にクリックし、押した側だけ`primary`クラスが付くことを確認。
+- 「2面構成の表」：`twoPlaneAreas`/`twoPlaneTableHTML`とも`typeof`が`undefined`（関数ごと削除された
+  ことの直接証拠）、`flatResult`のtextContentに「2面構成」の文字列が一切出現しないことを確認。
+- 他物件無影響：函南だけでなく5物件全部（hannan/camp/furuya/mikokai/hirai）を`siteSel`で巡回し、
+  `purchaseSets`を持たない4物件は`planeHighBlock`/`planeLowLabel2`/`planeToggleWrap`が常に`none`、
+  平井のみ表示されることを確認。
+- コンソール：`read_console_messages`の`onlyErrors:true`で全工程エラー0件を確認
+  （`[warn]`の「confirm()を自動でfalse扱いにした」というヘッドレス環境特有の警告のみ、実エラーなし）。
+  構文チェック（`new Function()`でscript全体を評価）もOK。
+- 未確認：実際のマウス/OSレベルのクリック（`computer{action:"screenshot"}`が「Browser paneが非表示」
+  で使えず、座標クリックも実行不可という制約は過去セッションから継続）。全てDOM状態の直接検証
+  （`disabled`/`display`/`elementFromPoint`によるカバー確認）＋`dispatchEvent(new MouseEvent(...))`
+  で代替。オーケストレータによる実ブラウザでの最終視覚確認が必要（依頼どおり）。
+
+指示書`docs/task_two_planes_redo.md`は完了につき削除。
