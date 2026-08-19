@@ -835,3 +835,82 @@ BUGLOG不要」と指定されていたため、この機能追加自体はBUGLO
   スクリーンショット不可のため。位置の正しさは上記de_trace_check.pngのピクセル重畳で確認済み）。
   キャッシュ差し替え後に平坦度のエンドツーエンド（キャッシュヒット・D/E集計が実データで埋まる）を
   確認してからpush。
+
+
+## 2026-08-19（6回目・D/E個別調整UI追加。implementerサブエージェントへ委任）
+- 背景: 5回目でD/Eを固定トレース座標(DE_D_PTS/DE_E_PTS)にしたが、ABCと同じSITE_XFORMでしか動かせず
+  D/E単体の位置合わせができなかった。腱さん指示「ABCとDとEをそれぞれ個別に調整したい、配置がめちゃくちゃ
+  だから直したい、各区画の面積も確認したい」を受け、指示書`docs/task_de_individual_adjust.md`（オーケス
+  トレータが事前に着手前4問まで含めて起票）どおりに実装。既存2パターン（siteAdj＝敷地全体、kouzuAdj＝
+  公図画像オーバーレイ）と全く同じ「ドラッグ+回転±5°/±1°+倍率±5%/±1%ボタン+localStorage保存」を、
+  D用・E用に複製する形（数式はkouzuAdjの単純相似変換を流用。siteAdjの面積正規化は使わない）。
+- index.html変更（指示書どおり、着手前4問は指示書内で回答済み）:
+  - `DE_REGIONS`（D/Eキー→DE_D_PTS/DE_E_PTS）・`deRegionLocalCentroid()`をDE_E_PTS直後に新設。
+  - `deRegionAdjKey/defaultDeRegionAdj/loadDeRegionAdj/saveDeRegionAdj`＋`deRegionAdj`（region引数で
+    D/E共通化。既定値はSITE_XFORM経由の現在中心）・`deAdjustMode`・`deRegionLatLngs(region)`
+    （kouzuAdjと同型の中心lat/lon・回転・倍率のみの単純相似変換）を新設。
+  - `deSubAreaPolys()`を`shapeToLatLngs(pts,SITE_XFORM)`（ABC共有）から`deRegionLatLngs(s.key)`
+    （区画ごと独立）へ書き換え。唯一の変換の入口なので、地図描画・平坦度の区画別集計・価格シミュに自動伝播。
+  - `SITES.hirai.subAreaSets.DE`の各要素に`key:'D'/'E'`を追加。
+  - `drawSubAreaDE()`：`deAdjustMode[s.key]`が真の区画だけ`interactive:true`+`mousedown`で
+    `startDeRegionDrag`へ接続（他区画は従来通りinteractive:false）。
+  - D/E個別調整のドラッグ・ボタン群を新設（`deHandleLayer`/`_deDrag`/`startDeRegionDrag`/
+    `redrawDeHandles`/`toggleDeAdjust`/`rotateDeRegion`/`scaleDeRegion`/`resetDeRegion`。siteAdjの
+    startSiteDrag/redrawSiteHandlesと同型、map.on('mousemove'/'mouseup')は既存の_siteDrag用と共存する
+    別リスナーとして追加）。
+  - `updateDeExtentUI()`を書き換え、`deArea_D`/`deArea_E`（旧`deExtentArea`を分割）へ区画ごとの
+    面積・倍率・角度を表示。`deAccuracyHintHTML()`も`trueAreaOfPts(s.pts)`（ABCの変換を誤用）から
+    `deSubAreaPolys()`経由の`trueAreaOfLL`へ修正（指示書指定の2箇所）。
+  - HTML（`deExtentWrap`）をD用・E用それぞれの「◯◯区画を調整」ボタン＋角度/倍率ボタン＋配置リセット
+    ＋面積表示に置き換え。
+  - `switchSite()`に`deAdjustMode={D:false,E:false}`のリセットを追加（指示書必須要求）。
+- **指示書に無い追加修正（実装中に判明した不足を補完。気を利かせてよい範囲の隣接修正として実施・報告）**:
+  - `priceSimGroups()`のDE分岐は`SITE.subAreaSets.DE`の生ptsをそのまま使っており、`priceSimUsableArea`
+    （ABCのSITE_XFORM）・`shoelaceArea`（ローカル座標、無変換）を経由していたため、`deSubAreaPolys()`を
+    直しただけでは価格シミュの「面積比」「使える面積比」テーブルのD/E行だけ調整前の位置・倍率のまま
+    取り残されることが判明（指示書の完了条件が「そのとおりになっているか実機で確認」と明記していたため
+    発覚）。`priceSimGroupRowsHTML`のareaFnを`r.pts`ではなく`r`自体を受ける形に変更し、DEグループだけ
+    `trueAreaOfLL(deRegionLatLngs(r.key))`／新設`priceSimUsableAreaDE(region,thM)`
+    （`usableAreaOfLL`共通化）を使うよう分岐。
+  - `flatGridSig()`（平坦度グリッドの再取得要否を判定する指紋）が`siteAdj`のみ見ておりD/E位置を
+    含んでいなかったため、「平坦度を計算→D/Eだけ動かす→再度計算」の順で操作すると指紋が一致して
+    `recomputeFlatOnly()`（再取得なし）に落ち、動かした後のD/E範囲がグリッド外のまま古い集計になる
+    穴があった。`deRegionAdj.D`/`.E`を指紋に追加し、D/E変更時は必ずグリッドを再計算（必要なら
+    自動でextentを拡張）するよう修正。
+- 動作確認（ローカルサーバー、python -m http.server 8934。このセッションもBrowserペインが非表示で
+  screenshotは使えず、`javascript_tool`でのDOM/Leafletレイヤー直読み・実DOM`.click()`・実`<select
+  onchange>`（`dispatchEvent`）・Leafletマーカーの`fire('drag'/'dragend')`で検証）:
+  - 初期状態：D=約410㎡・E=約193㎡・倍率1.00・角度0°（5回目の固定値と一致、新旧変換方式の差は
+    0.02%程度で無視できることを`trueAreaOfPts`との比較で確認）。
+  - D区画を調整→ボタン文言「調整を終了」・パネル表示・handleLayer1件・D区画のみinteractive:true
+    （E/ABCはfalseのまま）を確認。＋5%＋回転5°→面積452㎡（410×1.05²と一致）に表示更新、E/ABCは無変化。
+  - Leafletハンドルの`drag`/`dragend`イベントでD移動→`deRegionAdj.D`更新・localStorage保存・地図上の
+    ポリゴン重心が新座標と一致することを確認。
+  - ABC(`siteAdjBtn`)・D・Eを同時に調整モードにし、それぞれのハンドルを別方向へドラッグ→3つとも
+    指定通りに独立して移動し、互いに無干渉であることを確認（完了条件の核心）。
+  - 「Dの配置リセット」「Eの配置リセット」をそれぞれ実行→既定値に厳密一致で復帰、他方は無変化を確認。
+  - 価格シミュレーション：D/E行が調整のたびに更新されることを確認（面積比テーブルでD区画410→452㎡、
+    DE小計645㎡に追従。使える面積比テーブルもD/Eそれぞれ別の実数値を返すことを確認）。
+  - 平坦度計算：事前キャッシュ（g=1、90×127=11,430点）がD/E既定位置でヒットし続けること
+    （API取得なし）を確認 → 新旧`deSubAreaPolys()`が同じグリッド範囲を導くことの実証。紫破線色
+    （#7c3aed）がFLAT_GRID確定後にD/Eへ正しく適用されることを確認。
+  - flatGridSig修正の実証：coarseグリッド(g=8)で平坦度計算後、D区画を約167m移動→再計算せずには
+    指紋が不一致になることを確認→再計算実行→グリッドが12×16(192点)から29×35(1015点)へ自動拡張し、
+    移動後のD位置で実データ（miss:0）が取得されることを確認（「計算後にD/Eを動かす」という順序でも
+    古いデータに取り残されないことの実証）。
+  - 物件切替：平井→函南→平井で、D/Eの調整値がlocalStorageから復元され、調整モード（ボタン文言・
+    パネル表示・ハンドル）が正しくリセットされることを確認。camp/furuya/mikokai/hannanの4物件で
+    `deExtentWrap`非表示・`subAreaLayer`0件を確認。
+  - localStorage全クリア→リロード→実`<select>`のchangeイベントでhirai選択→D/Eが既定値
+    （SITE_XFORM経由の初期中心）で正しく初期化されることを確認（初回アクセス相当）。
+  - コンソールエラーなし（`read_console_messages`、`onlyErrors:true`含め全工程で確認。1件出た
+    `[warn] Page dialog suppressed`はテストスクリプト側が`flatRef`未設定のまま`generateFlat()`を
+    呼んだ自己都合のalertで、アプリのバグではない）。Node.jsで`<script>`全体を`new Function()`により
+    構文チェックOK。
+  - **未実施**：実際の画面を人の目で見た最終確認（色の実際の見え方等）はできていない。
+- **カイシュウ4問**：指示書`docs/task_de_individual_adjust.md`内で回答済み（①`deSubAreaPolys()`が
+  唯一の変換の入口 ②同種の既存機能はsiteAdj/kouzuAdj、数式はkouzuAdjを流用 ③引っ越しではない
+  ④本セッション内でsiteAdj/kouzuAdjと同型パターンを2回実装済みで3回目は機械的適用）。
+- **ヨコテン**：指示書指定どおり対象なし（同一パターンの新規追加であり、既存の類似バグを横展開で
+  拾う性質のタスクではない）。
+- 指示書`docs/task_de_individual_adjust.md`は指示書の指定どおり削除。

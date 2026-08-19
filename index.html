@@ -357,8 +357,50 @@
           <div class="note" id="kouzuArea" style="margin-top:6px"></div>
         </div>
         <div id="deExtentWrap" style="display:none;margin-top:8px;font-size:12px">
-          <div>隣接筆 D(1170-1)・E(1404-4)＝補正.pngの塗り指定をトレース（常時表示）</div>
-          <div class="note" id="deExtentArea" style="margin-top:4px"></div>
+          <div class="hint" style="margin:0 0 6px">隣接筆 D(1170-1)・E(1404-4)＝補正.pngの塗り指定を元にした概形。
+            敷地(ABC)とは別に、それぞれ個別に位置・角度・倍率を調整できます。</div>
+
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="small primary" id="deAdjBtn_D" onclick="toggleDeAdjust('D')">D区画を調整</button>
+            <button class="small" onclick="resetDeRegion('D')">Dの配置リセット</button>
+          </div>
+          <div id="deCtrl_D" style="display:none;margin-top:8px">
+            <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+              <span class="muted" style="font-size:11px">角度</span>
+              <button class="small" onclick="rotateDeRegion('D',-5)">⟲5°</button>
+              <button class="small" onclick="rotateDeRegion('D',-1)">−1°</button>
+              <button class="small" onclick="rotateDeRegion('D',1)">+1°</button>
+              <button class="small" onclick="rotateDeRegion('D',5)">⟳5°</button>
+              <span class="muted" style="font-size:11px;margin-left:4px">倍率</span>
+              <button class="small" onclick="scaleDeRegion('D',1/1.05)">−5%</button>
+              <button class="small" onclick="scaleDeRegion('D',1/1.01)">−1%</button>
+              <button class="small" onclick="scaleDeRegion('D',1.01)">+1%</button>
+              <button class="small" onclick="scaleDeRegion('D',1.05)">+5%</button>
+            </div>
+            <div class="hint" style="margin-top:6px">地図上の<b>D区画</b>をドラッグで移動。</div>
+          </div>
+          <div class="note" id="deArea_D" style="margin-top:6px"></div>
+
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+            <button class="small primary" id="deAdjBtn_E" onclick="toggleDeAdjust('E')">E区画を調整</button>
+            <button class="small" onclick="resetDeRegion('E')">Eの配置リセット</button>
+          </div>
+          <div id="deCtrl_E" style="display:none;margin-top:8px">
+            <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+              <span class="muted" style="font-size:11px">角度</span>
+              <button class="small" onclick="rotateDeRegion('E',-5)">⟲5°</button>
+              <button class="small" onclick="rotateDeRegion('E',-1)">−1°</button>
+              <button class="small" onclick="rotateDeRegion('E',1)">+1°</button>
+              <button class="small" onclick="rotateDeRegion('E',5)">⟳5°</button>
+              <span class="muted" style="font-size:11px;margin-left:4px">倍率</span>
+              <button class="small" onclick="scaleDeRegion('E',1/1.05)">−5%</button>
+              <button class="small" onclick="scaleDeRegion('E',1/1.01)">−1%</button>
+              <button class="small" onclick="scaleDeRegion('E',1.01)">+1%</button>
+              <button class="small" onclick="scaleDeRegion('E',1.05)">+5%</button>
+            </div>
+            <div class="hint" style="margin-top:6px">地図上の<b>E区画</b>をドラッグで移動。</div>
+          </div>
+          <div class="note" id="deArea_E" style="margin-top:6px"></div>
         </div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
           <button class="small primary" id="siteAdjBtn" onclick="toggleAdjust()">敷地を調整</button>
@@ -935,6 +977,16 @@ function polygonArea(pts){
    正式なベクトル座標は法務局の地積測量図（座標求積表付き）入手時に差し替える。 */
 const DE_D_PTS=[[27.71,25.66],[25.99,12.62],[24.25,6.24],[16.04,-4.91],[17.97,0.8],[23.86,9.75],[26.22,20.34],[26.11,23.51],[-8.18,52.77],[-8.23,56.11],[-7.4,56.63],[-1.84,53.86],[11.4,51.37],[17.97,36.42],[22.69,33.31],[25.69,34.18],[35.27,30.64],[34.5,25.95],[28.81,26.54]];
 const DE_E_PTS=[[10.87,65.24],[7.29,58.17],[6.84,55.15],[-4.4,57.34],[-7.9,56.95],[4.93,71.85],[6.71,75.55],[8.39,75.24],[9.93,72.59],[12.28,72.12]];
+// D/E個別調整（2026-08-19・6回目）用の領域テーブル。キーは'D'/'E'の2つだけ。将来別物件で使う想定は
+// 無いのでMapや配列にせず素朴なオブジェクトでよい。
+const DE_REGIONS = { D: DE_D_PTS, E: DE_E_PTS };
+// pts(ローカル座標、DE_D_PTS等と同じx=東/y=北のメートル単位)の単純な頂点平均中心を返す
+// （buildSite()のcx,cyと同じ考え方＝shoelace重心ではなく頂点平均。既存踏襲）。
+function deRegionLocalCentroid(pts){
+  const cx=pts.reduce((s,p)=>s+p[0],0)/pts.length;
+  const cy=pts.reduce((s,p)=>s+p[1],0)/pts.length;
+  return {cx,cy};
+}
 const SITES = {
   hannan: { id:'hannan', name:'函南 物件（区画図トレース）', anchor:{lat:35.0931148,lon:138.9555981}, targetArea:526, rect:false,
             // 区画図(全体区画図.png)の緑部分をトレースした形状（x=東, y=北 の相対px）
@@ -995,8 +1047,8 @@ const SITES = {
               // 直前の定義とコメントを参照）。面積は登記に合わせず塗りのまま（D約410㎡/E約193㎡）。
               // 主目的は平坦度計算をこの帯（川沿い）まで広げること＝generateFlat()のグリッド範囲拡張。
               'DE':[
-                {no:'D区画(1170-1)', pts:DE_D_PTS},
-                {no:'E区画(1404-4)', pts:DE_E_PTS}
+                {no:'D区画(1170-1)', pts:DE_D_PTS, key:'D'},
+                {no:'E区画(1404-4)', pts:DE_E_PTS, key:'E'}
               ],
             }, subAreaDefault:'ABC', twoSided:false,
             // XY案の分割線の向き（A/B境界の実測ベクトル。B/C境界とも実測差0.12°でほぼ同一直線）。
@@ -1084,13 +1136,49 @@ function subAreaPolys(){
   if(!areas || !SITE_XFORM) return [];
   return areas.map(s=>({no:s.no, latlngs:shapeToLatLngs(s.pts, SITE_XFORM)}));
 }
+/* ====== D/E個別調整（2026-08-19・6回目） ======
+   D/EはABC(siteAdj/SITE_XFORM)とは別の、区画ごとに独立した位置・角度・倍率を持つ。ただしbuildSite()の
+   面積正規化(s=sqrt(targetArea/a0))のような特殊変換は含まない＝kouzuAdj（公図画像オーバーレイ）と
+   同じ「中心lat/lon・回転・倍率のみ」の単純相似変換をポリゴン頂点に適用する（画像かポリゴンかの違いだけ）。 */
+function deRegionAdjKey(region){ return 'kouteisa_de_'+region+'_adjust_'+CURRENT_SITE; }
+// 既定値：現在(SITE_XFORMのABC相対位置)にある中心を初期のlat/lonとする。
+// SITE_XFORMが未確定の間は呼ばない（updateDeExtentUI()と同じくbuildSite()の後に呼ぶこと）。
+function defaultDeRegionAdj(region){
+  const {cx,cy}=deRegionLocalCentroid(DE_REGIONS[region]);
+  const ll=shapeToLatLngs([[cx,cy]], SITE_XFORM)[0];
+  return {lat:ll.lat, lon:ll.lon, rot:0, scale:1};
+}
+function loadDeRegionAdj(region){
+  try{
+    const v=JSON.parse(localStorage.getItem(deRegionAdjKey(region)));
+    if(v && typeof v.lat==='number' && typeof v.lon==='number') return v;
+  }catch(e){}
+  return defaultDeRegionAdj(region);
+}
+function saveDeRegionAdj(region){ try{ localStorage.setItem(deRegionAdjKey(region), JSON.stringify(deRegionAdj[region])); }catch(e){} }
+let deRegionAdj = { D:{lat:0,lon:0,rot:0,scale:1}, E:{lat:0,lon:0,rot:0,scale:1} };  // 起動時プレースホルダ（updateDeExtentUI()がSITE_XFORM確定後に必ず上書きする）
+let deAdjustMode = { D:false, E:false };
+// pts(ローカルm座標)をregionの現在のdeRegionAdjで緯度経度化する。buildSite()と違い面積正規化
+// (s=sqrt(targetArea/a0))は行わない＝kouzuAdjと同じ「素の相似変換」。
+function deRegionLatLngs(region){
+  const pts=DE_REGIONS[region], adj=deRegionAdj[region];
+  const {cx,cy}=deRegionLocalCentroid(pts);
+  const mLat=111320, mLon=111320*Math.cos(rad(adj.lat));
+  const r=rad(adj.rot), cr=Math.cos(r), sr=Math.sin(r);
+  return pts.map(p=>{
+    const x=(p[0]-cx)*adj.scale, y=(p[1]-cy)*adj.scale;
+    const xr=x*cr-y*sr, yr=x*sr+y*cr;
+    return {lat: adj.lat+yr/mLat, lon: adj.lon+xr/mLon};
+  });
+}
 // D/E（実在の隣接2筆1170-1・1404-4）を常に latlng で返す（案の選択=subAreaVariantに関わらず）。
-// subAreaPolys()と同じ変換ロジックだが、対象はsubAreaSets.DE固定＝現在選択中の案とは独立。
-// 地図の常設描画(drawSubAreaDE)と、平坦度/価格シミュレーションの「隣接筆」セクションが共有する。
+// 2026-08-19（6回目）：ABCと共有のSITE_XFORMではなく、区画ごとに独立したdeRegionLatLngs(key)を使う
+// （ABCを動かしてもD/Eは一緒に動かない＝個別調整の唯一の変換の入口。ここを直せば地図の常設描画
+// (drawSubAreaDE)・平坦度の区画別内訳・価格シミュレーションの「隣接筆」セクション全部に伝播する）。
 function deSubAreaPolys(){
   const areas=SITE.subAreaSets && SITE.subAreaSets.DE;
-  if(!areas || !SITE_XFORM) return [];
-  return areas.map(s=>({no:s.no, latlngs:shapeToLatLngs(s.pts, SITE_XFORM)}));
+  if(!areas) return [];
+  return areas.map(s=>({no:s.no, key:s.key, latlngs:deRegionLatLngs(s.key)}));
 }
 // 区画割案の切替ボタン（物件が複数案を持つ時だけ）。地図・平坦度の表示を選択中の案へ即座に差し替える。
 function toggleSubAreaVariant(){
@@ -1191,17 +1279,29 @@ function priceSimGroups(){
   if(SITE.subAreaSets && SITE.subAreaSets.DE) groups.push({label:'DE', items:SITE.subAreaSets.DE});
   return groups;
 }
-function priceSimUsableArea(pts, thM){
-  if(!FLAT_GRID || !SITE_XFORM) return null;
-  const poly=shapeToLatLngs(pts, SITE_XFORM);
+// 変換済みの緯度経度ポリゴン(ll)に対して、FLAT_GRIDのセルから「使える面積(±thM以内)」を集計する
+// 共通ロジック。ABC/XY（shapeToLatLngs+SITE_XFORM）とD/E（deRegionLatLngs、区画ごとに独立した変換）で
+// 変換方法そのものは違うが、変換した後の「llから使える面積を出す」処理は同じなのでここに正規化する。
+function usableAreaOfLL(ll, thM){
+  if(!FLAT_GRID) return null;
   const cellArea=FLAT_GRID.g*FLAT_GRID.g;
   let inside=0, usable=0;
   FLAT_GRID.cells.forEach(c=>{
-    if(!pointInLLPoly(c.lat,c.lon,poly)) return;
+    if(!pointInLLPoly(c.lat,c.lon,ll)) return;
     inside+=cellArea;   // 分母は区画内の全セル（欠測も含む＝欠測で使える率が水増しされないように）
     if(c.dh!=null && Math.abs(c.dh)<=thM) usable+=cellArea;
   });
-  return usable*regionAreaScale(trueAreaOfLL(poly), inside);   // 実測図の面積へ正規化
+  return usable*regionAreaScale(trueAreaOfLL(ll), inside);   // 実測図の面積へ正規化
+}
+function priceSimUsableArea(pts, thM){
+  if(!SITE_XFORM) return null;
+  return usableAreaOfLL(shapeToLatLngs(pts, SITE_XFORM), thM);
+}
+// D/E（区画ごとに独立調整可能。2026-08-19・6回目）の使える面積：ABCと共有のSITE_XFORMではなく
+// deRegionLatLngs(region)で現在の調整位置を反映する（deSubAreaPolys()と同じ変換の入口を共有）。
+// これが無いと、D/Eを動かしても価格シミュレーションの「使える面積比」だけ動かす前の位置のままになる。
+function priceSimUsableAreaDE(region, thM){
+  return usableAreaOfLL(deRegionLatLngs(region), thM);
 }
 // 区画行1本のHTML。基準区画(A)は色付きで区別し「(基準)」を明記する
 function priceSimRowHTML(name, baseName, area, tsuboText, price, f, t, y){
@@ -1209,11 +1309,13 @@ function priceSimRowHTML(name, baseName, area, tsuboText, price, f, t, y){
   return `<tr${isBase?' style="background:#16241b"':''}><td class="l">${name}${isBase?' <span style="color:#8bc34a;font-size:10px">(基準)</span>':''}</td>`+
     `<td>${f(area)}</td><td>${t(area)}</td><td>${y(price)}</td></tr>`;
 }
-// グループ(ABC or DE)の内訳行＋末尾に小計行。areaFnは区画ptsから面積(㎡)を出す関数(面積比/使える面積比で差し替える)
+// グループ(ABC or DE)の内訳行＋末尾に小計行。areaFnは区画1件(r)から面積(㎡)を出す関数(面積比/使える
+// 面積比で差し替える。ABC/XYはr.ptsだけで済むが、D/Eは区画ごとに独立した変換のためr.keyも要るので、
+// r.ptsではなくr自体を渡す＝呼び出し側でareaFnをグループのlabelに応じて選ぶ)
 function priceSimGroupRowsHTML(items, label, baseName, areaFn, unit, f, t, y){
   let sum=0;
   const rows=items.map(r=>{
-    const a=areaFn(r.pts);
+    const a=areaFn(r);
     sum+=a;
     return priceSimRowHTML(r.no.split(/\s+/)[0], baseName, a, t, unit*a, f, t, y);
   }).join('');
@@ -1236,7 +1338,11 @@ function renderPriceSim(){
   const totalArea=shoelaceArea(SITE.shape);
 
   const unit1=baseArea>0 ? effPrice/baseArea : 0;   // 万円/㎡（面積比）
-  const rows1=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName, r=>shoelaceArea(r), unit1, f, t, y)).join('');
+  // DE（区画ごとに独立調整可能）はABCと共有のローカル座標系ではないため、r.ptsをそのままshoelaceArea
+  // には渡せない＝deRegionLatLngs(r.key)で現在の調整位置・倍率を反映した面積を使う。
+  const rows1=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName,
+    g.label==='DE' ? (r=>trueAreaOfLL(deRegionLatLngs(r.key))) : (r=>shoelaceArea(r.pts)),
+    unit1, f, t, y)).join('');
   let html=`<div class="muted" style="font-size:11px;margin-bottom:6px">基準区画：${baseName}（約${f(baseArea)}㎡・${t(baseArea)}坪）　実効価格 ${y(effPrice)}万円${discountPct?`（${discountPct}%引き）`:''}　単価 ${unit1.toFixed(3)}万円/㎡</div>`;
   html+=`<div style="font-weight:700;color:#e6edf3;margin:4px 0 2px">面積比の試算</div>`
     + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalArea)}㎡（${t(totalArea)}坪）　→　<b>${y(unit1*totalArea)}万円</b></div>`
@@ -1249,8 +1355,9 @@ function renderPriceSim(){
     const baseUsable=priceSimUsableArea(base.pts, thM)||0;
     const unit2=baseUsable>0 ? effPrice/baseUsable : 0;
     const totalUsable=priceSimUsableArea(SITE.shape, thM)||0;
-    const usableAreaFn=r=>priceSimUsableArea(r, thM)||0;
-    const rows2=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName, usableAreaFn, unit2, f, t, y)).join('');
+    const rows2=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName,
+      g.label==='DE' ? (r=>priceSimUsableAreaDE(r.key, thM)||0) : (r=>priceSimUsableArea(r.pts, thM)||0),
+      unit2, f, t, y)).join('');
     html+=`<div style="font-weight:700;color:#e6edf3;margin:8px 0 2px">使える面積比(±${(thM*100).toFixed(0)}cm)の試算</div>`
       + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalUsable)}㎡（${t(totalUsable)}坪）　→　<b>${y(unit2*totalUsable)}万円</b></div>`
       + `<table class="ftab">${baseUsable>0?'':'<caption style="color:#e07a4a">基準区画(A)の使える面積が0のため試算できません</caption>'}<tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
@@ -1294,28 +1401,36 @@ function drawSubAreaDE(){
   const col = isCalc ? '#7c3aed' : COL.site;
   deSubAreaPolys().forEach(s=>{
     const ll=s.latlngs.map(p=>[p.lat,p.lon]);
+    // 2026-08-19（6回目）：deAdjustMode[s.key]が真の区画だけドラッグで動かせるようにする
+    // （redrawSitePolygon()のpoly.on('mousedown', startSiteDrag)と同型）。
+    const editing = deAdjustMode[s.key];
     const opt = isCalc
-      ? {color:col,weight:2,opacity:.9,dashArray:'5,4',fill:false,interactive:false}
-      : {color:col,weight:2,opacity:.9,dashArray:'4,3',fillColor:col,fillOpacity:.18,interactive:false};
-    L.polygon(ll,opt).addTo(subAreaLayer);
+      ? {color:col,weight:2,opacity:.9,dashArray:'5,4',fill:false,interactive:editing}
+      : {color:col,weight:2,opacity:.9,dashArray:'4,3',fillColor:col,fillOpacity:editing?.30:.18,interactive:editing};
+    const poly=L.polygon(ll,opt).addTo(subAreaLayer);
+    if(editing) poly.on('mousedown', e=>startDeRegionDrag(s.key, e));
     const c=ll.reduce((a,p)=>[a[0]+p[0],a[1]+p[1]],[0,0]).map(v=>v/ll.length);
     L.marker(c,{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
       html:`<div style="font:700 11px/1.2 sans-serif;color:${col};background:rgba(15,23,32,.75);padding:1px 5px;border-radius:4px;white-space:nowrap">${s.no}</div>`})}).addTo(subAreaLayer);
   });
 }
 /* ====== D/E面積表示の更新 ======
-   旧「D/E境界の調整（eExtent/dExtent）」UIは2026-08-19の5回目改修で廃止（D/Eは腱さんの塗り指定
-   （補正.png）を固定トレースしたDE_D_PTS/DE_E_PTSになったため、伸縮パラメータが消滅した。
-   localStorageの旧キーkouteisa_de_extent_*は放置で無害＝読む者がいない）。
-   本関数はパネルの面積表示（deExtentArea）と価格シミュレーションの追従だけを担う。
-   SITE_XFORM確定後（drawSite()の後）に呼ぶこと＝trueAreaOfPts()がSITE_XFORMを使うため。 */
+   2026-08-19（6回目）：D/Eをそれぞれ独立した位置・角度・倍率で調整できるようにした（deRegionAdj）。
+   本関数はパネルの面積表示（deArea_D/deArea_E）と価格シミュレーションの追従を担う。
+   SITE_XFORM確定後（drawSite()の後）に呼ぶこと＝defaultDeRegionAdj()がSITE_XFORMを使うため。 */
 function updateDeExtentUI(){
   const wrap=document.getElementById('deExtentWrap');
   const has=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
   if(wrap) wrap.style.display=has?'block':'none';
   if(!has) return;
-  const el=document.getElementById('deExtentArea');
-  if(el) el.textContent = SITE.subAreaSets.DE.map(s=>`${s.no} 約${trueAreaOfPts(s.pts).toFixed(0)}㎡`).join('　／　');
+  ['D','E'].forEach(region=>{
+    deRegionAdj[region]=loadDeRegionAdj(region);
+  });
+  const polys=deSubAreaPolys();
+  polys.forEach(s=>{
+    const el=document.getElementById('deArea_'+s.key);
+    if(el) el.textContent = `${s.no}　約${trueAreaOfLL(s.latlngs).toFixed(0)}㎡　（倍率${deRegionAdj[s.key].scale.toFixed(2)}・角度${Math.round(deRegionAdj[s.key].rot)}°）`;
+  });
   drawSubAreaDE();
   renderPriceSim();
 }
@@ -1374,6 +1489,59 @@ function rotateSite(d){ siteAdj.rot=(siteAdj.rot+d); saveSiteAdj(); drawSite(); 
 function scaleSite(f){ siteAdj.scale=Math.max(0.05,Math.min(20,siteAdj.scale*f)); saveSiteAdj(); drawSite(); }
 function resetSiteAdj(){ siteAdj=defaultAdj(); saveSiteAdj(); drawSite(); map.panTo([siteAdj.lat,siteAdj.lon]); }
 
+/* ====== D/E個別調整：ドラッグ・ボタン操作（2026-08-19・6回目） ======
+   siteAdjのstartSiteDrag/redrawSiteHandlesと同型だが、region('D'または'E')引数で汎用化し、
+   ABCとは完全に独立した状態(deRegionAdj[region]/deAdjustMode[region])を動かす。 */
+const deHandleLayer = L.layerGroup().addTo(map);   // D/E共通（両方同時に調整中でも同じレイヤーに乗る）
+let _deDrag=null;   // {region, prev}
+// D/Eポリゴン本体をドラッグして移動（drawSubAreaDE()側でdeAdjustMode[s.key]がtrueの時だけ
+// interactive:trueにしてmousedownへ繋いでいる。siteLayerのstartSiteDragと同型）
+function startDeRegionDrag(region, e){
+  if(!deAdjustMode[region]) return;
+  _deDrag={region, prev:e.latlng};
+  map.dragging.disable();
+  L.DomEvent.stopPropagation(e);
+  if(e.originalEvent) L.DomEvent.preventDefault(e.originalEvent);
+}
+map.on('mousemove', e=>{
+  if(!_deDrag) return;
+  const adj=deRegionAdj[_deDrag.region];
+  adj.lat += e.latlng.lat - _deDrag.prev.lat;
+  adj.lon += e.latlng.lng - _deDrag.prev.lng;
+  _deDrag.prev = e.latlng;
+  drawSubAreaDE(); redrawDeHandles();
+});
+map.on('mouseup', ()=>{ if(_deDrag){ const r=_deDrag.region; _deDrag=null; map.dragging.enable(); saveDeRegionAdj(r); } });
+function redrawDeHandles(){
+  deHandleLayer.clearLayers();
+  ['D','E'].forEach(region=>{
+    if(!deAdjustMode[region]) return;
+    const adj=deRegionAdj[region];
+    const col = region==='D' ? '#ff4d6d' : '#22c55e';   // D/Eの見分け用に色分け（地図上のラベル色と揃える必要は無い）
+    const html=`<div style="width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.5);border:3px solid ${col};box-shadow:0 0 5px #000;cursor:move"></div>`;
+    const h=L.marker([adj.lat,adj.lon],{icon:L.divIcon({html,className:'dot-icon',iconSize:[20,20],iconAnchor:[10,10]}),draggable:true,autoPan:true,zIndexOffset:2000}).addTo(deHandleLayer);
+    h.bindTooltip(`ドラッグで${region}区画を移動`,{direction:'top',offset:[0,-10]});
+    h.on('drag',e=>{const ll=e.target.getLatLng(); deRegionAdj[region].lat=ll.lat; deRegionAdj[region].lon=ll.lng; drawSubAreaDE();});
+    h.on('dragend',()=>saveDeRegionAdj(region));
+  });
+}
+function toggleDeAdjust(region){
+  deAdjustMode[region]=!deAdjustMode[region];
+  document.getElementById('deAdjBtn_'+region).textContent = deAdjustMode[region]?'調整を終了':(region+'区画を調整');
+  document.getElementById('deCtrl_'+region).style.display = deAdjustMode[region]?'block':'none';
+  drawSubAreaDE(); redrawDeHandles();
+}
+// rotateDeRegion/scaleDeRegion/resetDeRegionは面積が変わるのでupdateDeExtentUI()（面積表示の更新）も
+// 呼ぶ。ドラッグ（redrawDeHandles内のh.on('drag',...)と_deDragのmousemove）は移動だけで面積は
+// 変わらないのでupdateDeExtentUI()は呼ばない（既存のsiteAdjのドラッグ処理も同じ扱い）。
+function rotateDeRegion(region,d){ deRegionAdj[region].rot=(deRegionAdj[region].rot+d); saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI(); }
+function scaleDeRegion(region,f){ deRegionAdj[region].scale=Math.max(0.1,Math.min(10, deRegionAdj[region].scale*f)); saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI(); }
+function resetDeRegion(region){
+  deRegionAdj[region]=defaultDeRegionAdj(region);
+  saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI();
+  map.panTo([deRegionAdj[region].lat, deRegionAdj[region].lon]);
+}
+
 /* ====== 物件切替 ====== */
 function populateSiteSel(){
   const sel=document.getElementById('siteSel'); if(!sel) return;
@@ -1401,6 +1569,15 @@ function switchSite(id){
   updateKouzuToggleUI();   // 公図スキャン重ね表示：物件ごとに有無が違うのでトグルの表示/非表示とOFFへ戻す
   subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
   if(SITE.splitAxis) applyDeSplitPercent(50);   // XY分割は物件を切り替えるたび50%に戻す
+  // D/E個別調整：前物件の調整モードを引き継がない（残ると誤ってドラッグできてしまう＝事故る。
+  // 上のupdateKouzuToggleUI()がkouzuAdjustModeをリセットしているのと同じ扱い）。DOM側（ボタン文言・
+  // パネル表示・地図上のハンドル）も合わせて戻す。
+  deAdjustMode={D:false,E:false};
+  ['D','E'].forEach(region=>{
+    const btn=document.getElementById('deAdjBtn_'+region); if(btn) btn.textContent=region+'区画を調整';
+    const ctrl=document.getElementById('deCtrl_'+region); if(ctrl) ctrl.style.display='none';
+  });
+  deHandleLayer.clearLayers();
   // D/E面積表示パネル：SITE_XFORM確定後（上のbuildSite()の後）に呼ぶこと。物件ごとに有無が違うので
   // 表示/非表示を切り替える。updateSubAreaToggleUI()（#deAccuracyHintの文言を
   // SITE.subAreaSets.DEから生成する）より前に置き、新物件の値が確定してから読ませる。
@@ -1752,7 +1929,11 @@ let FLAT_GRID=null;   // {g,cols,rows,en0:{e,n},cLat,cLon,cells:[{e,n,lat,lon,el
 let FLAT_GRID_SIG=null;   // FLAT_GRID取得時の[物件,配置,格子間隔]の指紋。変わっていなければ再取得は不要
 function flatGridSig(){
   const g=Math.max(0.5, parseFloat(document.getElementById('fGrid').value)||1);
-  return JSON.stringify([CURRENT_SITE, siteAdj.lat, siteAdj.lon, siteAdj.rot, siteAdj.scale, g]);
+  // deRegionAdj（D/E個別調整。2026-08-19・6回目）もグリッド範囲(generateFlat()のsEN)に影響するため
+  // 指紋に含める。無いと「平坦度を計算」で一度グリッドを取得した後にD/Eだけ動かして再度計算した時、
+  // siteAdjは変わっていないので指紋が一致→recomputeFlatOnly()（再取得なし）に落ちてしまい、
+  // 動かした後のD/E範囲がグリッド外だと集計が古い位置のまま・欠測扱いになる。
+  return JSON.stringify([CURRENT_SITE, siteAdj.lat, siteAdj.lon, siteAdj.rot, siteAdj.scale, g, deRegionAdj.D, deRegionAdj.E]);
 }
 
 function flatRefKey(){ return 'kouteisa_flatref_'+CURRENT_SITE; }
@@ -2339,14 +2520,14 @@ function hsrcNoteText(){
 // DE（実在の隣接2筆 1170-1/1404-4）がこの物件にある時は常に出す精度注意書き（正本はここ1箇所。
 // 表示箇所は複数：updateSubAreaToggleUI()の#deAccuracyHint、区画別内訳の「隣接筆（D/E）」見出し直下）。
 // 精度を偽って見せないための表示。DEは常設（案の選択subAreaVariantに関わらず出る）なので、この関数の
-// 条件もSITEにDEがあるかどうかだけで判定する。面積はDE_D_PTS/DE_E_PTSから動的に算出する。
-// 固定文言に数値を焼き込まない＝正規化の原則（2026-08-19、5回目＝腱さんの塗り指定トレース版。
-// 過去の失敗の経緯はSITES.hirai.subAreaSetsのコメント参照）。
+// 条件もSITEにDEがあるかどうかだけで判定する。面積はdeSubAreaPolys()（deRegionAdjで個別調整した
+// 現在位置・倍率を反映）から動的に算出する。固定文言に数値を焼き込まない＝正規化の原則
+// （2026-08-19、6回目＝D/E個別調整版。過去の失敗の経緯はSITES.hirai.subAreaSetsのコメント参照）。
 function deAccuracyHintHTML(){
   const de=SITE.subAreaSets && SITE.subAreaSets.DE;
   if(!de) return '';
-  const areaText=de.map(s=>`${s.no} 約${trueAreaOfPts(s.pts).toFixed(0)}㎡`).join('／');
-  return `<div class="hint" style="color:#e0a458;margin:2px 0 6px">⚠ D/E（1170-1・1404-4）は腱さんが補正.pngへ塗って指定した範囲をABC相対で位置合わせしてトレースした形状です（${areaText}）。塗りが目安のため面積は登記（D466㎡/E251㎡）とずれます。位置・形の参考と平坦度の概算用で、正式には地積測量図の入手後に座標を差し替えます。</div>`;
+  const areaText=deSubAreaPolys().map(s=>`${s.no} 約${trueAreaOfLL(s.latlngs).toFixed(0)}㎡`).join('／');
+  return `<div class="hint" style="color:#e0a458;margin:2px 0 6px">⚠ D/E（1170-1・1404-4）は腱さんが補正.pngへ塗って指定した範囲をABC相対で位置合わせしてトレースした形状で、地図上でさらに個別に位置・角度・倍率を調整できます（${areaText}）。塗りが目安のため面積は登記（D466㎡/E251㎡）とずれます。正式には地積測量図の入手後に座標を差し替えます。</div>`;
 }
 // スキームに応じて結果パネルを描画するディスパッチャ（呼び出し元はスキームを意識しない）
 function computeFlatAreas(){
