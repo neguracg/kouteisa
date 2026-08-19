@@ -293,6 +293,7 @@
         </div>
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
           <button class="small" onclick="clearFlat()">クリア</button>
+          <button class="small" onclick="exportSitePlannerCSV()">📤 SitePlanner用にCSV出力</button>
           <span id="flatProg" class="muted" style="font-size:11px"></span>
         </div>
       </div>
@@ -1355,6 +1356,95 @@ function usableAreaAtElev(ll, targetElev, thM){
     if(c.elev!=null && Math.abs(c.elev-targetElev)<=thM) usable+=cellArea;
   });
   return usable*regionAreaScale(trueAreaOfLL(ll), inside);
+}
+// 任意の目標標高(targetElev)を基準にした dh 配列を返す（cells[].dhは現在アクティブな面のものしか
+// 持たないため、低い面・高い面を同時に扱うにはこの汎用版が要る。usableAreaAtElev()と同じ考え方）。
+function dhArrayAtElev(cells, targetElev){
+  return cells.map(c => (c.elev!=null && targetElev!=null) ? c.elev-targetElev : null);
+}
+// 高低差±thM以内のセルの外周線を、連結成分ごとに閉ループ配列で返す（drawCutFillOutlines()の
+// maskAt(0.50)+traceMaskOutline()と同じ手法。ただしpointInSiteによるABC限定はしない＝
+// グリッド全体(ABC+D+E)を対象にする。戻り値は[[ [e,n], ... ], ...]、eloop=局所メートル座標）。
+function traceElevBoundaryLoops(targetElev, thM){
+  if(!FLAT_GRID || targetElev==null) return [];
+  const {g,cols,rows,en0,cells}=FLAT_GRID;
+  const dh=dhArrayAtElev(cells, targetElev);
+  const maskRaw=cells.map((c,i)=> dh[i]!=null && Math.abs(dh[i])<=thM);
+  const {comp,sizes}=gridComponents(maskRaw, rows, cols);
+  const MIN_ISLAND=2;   // drawCutFillOutlines()と同じ、1〜2セルの孤立点は輪郭を出さない
+  const mask=maskRaw.map((v,i)=> v && sizes[comp[i]]>MIN_ISLAND);
+  const inMask=(r,c)=>{ if(r<0||r>=rows||c<0||c>=cols) return false; return mask[r*cols+c]; };
+  return traceMaskOutline(inMask, rows, cols, g, en0.e, en0.n);
+}
+// 敷地外周＋低い面/高い面の50cm境界線を、SitePlanner（別プロジェクト）へそのままチャット添付
+// できる自己文書化CSVとして書き出す。座標系はFLAT_GRIDと同じローカル直交座標(e=東,n=北,メートル、
+// 真北基準・回転なし)に統一し、敷地外周(緯度経度)もこの座標系へ変換してから出力する
+// （両方が同じ配置でSitePlanner側に描画されるようにするため）。
+function exportSitePlannerCSV(){
+  if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  const {cLat,cLon}=FLAT_GRID;
+  const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+  const toEN=(lat,lon)=>({e:(lon-cLon)*mLon, n:(lat-cLat)*mLat});
+  const thM=currentUsableM();
+  const rowsOut=[];
+  siteLatLngs.forEach((ll,i)=>{
+    const p=toEN(ll.lat, ll.lon);
+    rowsOut.push(['site_outline', i, p.e.toFixed(3), p.n.toFixed(3)]);
+  });
+  function addLoops(prefix, targetElev){
+    if(targetElev==null) return;
+    traceElevBoundaryLoops(targetElev, thM).forEach((loop, li)=>{
+      loop.forEach((p, pi)=>{ rowsOut.push([`${prefix}_${li+1}`, pi, p[0].toFixed(3), p[1].toFixed(3)]); });
+    });
+  }
+  let lowElev=null, highElev=null;
+  if(SITE.purchaseSets){
+    lowElev = FLAT_PLANES.low ? FLAT_PLANES.low.elev : null;
+    highElev = FLAT_PLANES.high ? FLAT_PLANES.high.elev : null;
+    addLoops('low_50cm', lowElev);
+    addLoops('high_50cm', highElev);
+  } else {
+    lowElev = (flatRef && flatRef.elev!=null) ? flatRef.elev : null;
+    addLoops('flat_50cm', lowElev);
+  }
+  const header=
+`# ${SITE.name} 敷地・平坦度ライン エクスポート（がけ条例確認ツール 52_kouteisa より）
+# 生成日時: ${new Date().toISOString()}
+#
+# 【このファイルの目的】
+# SitePlannerプロジェクトで、この敷地の外周と「使える範囲（高低差±50cm以内）」の境界線を、
+# 同じ位置関係で1つの背景に重ねて描画するための元データです。
+#
+# 【座標系】ローカル直交座標（単位=メートル、真北基準、回転なし）。x=東方向が正、y=北方向が正。
+# 原点は敷地重心付近の実際の緯度経度（lat=${cLat.toFixed(7)}, lon=${cLon.toFixed(7)}）。
+# SitePlanner側でこの(x,y)をそのまま平面座標としてメートル単位でプロットしてください。
+# 縮尺・回転の変換は不要です（1データ単位=現実の1メートル、真上が北）。
+#
+# 【データの読み方】
+# 1列目 dataset: どの図形に属するかを示す名前。
+#   site_outline               = 敷地の外周（位置・角度・倍率を調整した最終配置）
+#   low_50cm_1, low_50cm_2,... = 低い面（基準標高${lowElev!=null?lowElev.toFixed(1)+'m':'未計算のため出力なし'}）の
+#     「使える範囲（高低差±${Math.round(thM*100)}cm以内）」境界線。地形により分離した島がある場合は
+#     _1,_2,...の連番で複数系列に分かれます。
+#   high_50cm_1, high_50cm_2,... = 高い面（基準標高${highElev!=null?highElev.toFixed(1)+'m':'未計算のため出力なし'}）の同上。
+# 2列目 seq: 同じdataset内での点の順番（0始まり）。
+# 3列目 x, 4列目 y: 上記座標系での位置（メートル）。
+#
+# 【描画方法】各datasetは閉じたポリゴン（輪郭線）です。同じdataset名の行をseq昇順に直線でつなぎ、
+# 最後の点から最初の点へ戻して閉じてください。50cm境界線は1mグリッドの格子沿いに生成しているため、
+# 直線区間が階段状（カクカク）になります＝実際の地形の高低差の範囲を格子解像度で近似した輪郭です。
+# 見た目を滑らかにしたい場合は、SitePlanner側で任意に平滑化してください（元の面積・位置は変えないこと）。
+#
+dataset,seq,x,y
+`;
+  const csv = header + rowsOut.map(r=>r.join(',')).join('\n') + '\n';
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`kouteisa_${CURRENT_SITE}_siteplanner_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
 }
 // 区画(key)の「使える面積」＝チェックが入っている段（下/上）の使える面積の合計。
 // 「敷地全体」チェックボックス表と、価格シミュレーションの「使える面積比」の両方がこの関数だけを見る
