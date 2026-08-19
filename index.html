@@ -1418,7 +1418,13 @@ function renderPriceSim(){
     // 2026-08-20：「使える面積比」は「敷地全体」チェックボックス表と同じregionUsableAreaSelected()
     // を通す（低い面/高い面の選択合計＝腱さん指示「これで使える面積として」）。旧priceSimUsableArea()/
     // priceSimUsableAreaDE()は廃止（usableAreaOfLL()の定義箇所参照）。
-    const baseUsable=regionUsableAreaSelected(baseName, shapeToLatLngs(base.pts,SITE_XFORM), thM)||0;
+    // ただし基準区画(A)は「実売価格が分かっている参照点」であって「購入予定の区画セット」ではないため、
+    // 敷地全体チェックボックスの選択状態（既定でA区画は非チェック）に左右されると試算が常に0になり
+    // 壊れる。基準区画の使える面積だけはチェック状態を無視し、低い面（従来からの唯一の面）で
+    // 常に計算する（実装中に発見・オーケストレータ判断で確定：既定チェックはCDE寄りのまま変えず、
+    // 基準区画側の計算を独立させることで解決）。
+    const baseLL=shapeToLatLngs(base.pts,SITE_XFORM);
+    const baseUsable=FLAT_PLANES.low ? usableAreaAtElev(baseLL, FLAT_PLANES.low.elev, thM) : 0;
     const unit2=baseUsable>0 ? effPrice/baseUsable : 0;
     const rows2=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName,
       g.label==='DE' ? (r=>regionUsableAreaSelected(r.key, deRegionLatLngs(r.key), thM)||0)
