@@ -2300,18 +2300,27 @@ async function generateFlat(){
       const r=await fetch(ec.url);
       if(!r.ok) throw new Error('cache http '+r.status);
       const j=await r.json();
-      if(j && Array.isArray(j.cells) && j.cols===cols && j.rows===rows &&
-         Math.abs(j.eMin-eMin)<1e-6 && Math.abs(j.nMin-nMin)<1e-6){
+      // 2026-08-20：完全一致(cols/rows/eMin/nMinがぴったり同じ)ではなく「キャッシュ格子が今必要な範囲を
+      // 包含しているか」に緩和した。D/E個別調整(deRegionAdj)で必要範囲がわずかに動いても、
+      // 事前キャッシュ生成時に余裕を持たせてあれば引き続きヒットする（腱さん指摘「保存して毎回計らせないで」）。
+      // キャッシュの方が今の必要範囲より広い分には、pointInLLPoly等の判定は無害に多くのセルを走査するだけ。
+      const EPS=1e-6;
+      const cacheEMax=j.eMin+(j.cols-1)*j.g, cacheNMax=j.nMin+(j.rows-1)*j.g;
+      const contains = j && Array.isArray(j.cells) && j.g===g &&
+        j.eMin<=eMin+EPS && cacheEMax>=eMax-EPS && j.nMin<=nMin+EPS && cacheNMax>=nMax-EPS;
+      if(contains){
+        // キャッシュ側の格子（cols/rows/eMin/nMin）をそのまま採用する。今回計算したeMin/eMax等より
+        // 広い範囲を含むが、cLat/cLonはsiteAdjだけに依存し今回の値と一致するのでtoLL()は共有できる。
         const cells=j.cells.map(c=>({e:c.e, n:c.n, lat:c.lat, lon:c.lon, elev:c.elev,
                                       dh:(c.elev!=null)?(c.elev-flatRef.elev):null}));
-        FLAT_GRID={g,cols,rows,en0:{e:eMin,n:nMin},cLat,cLon,cells};
+        FLAT_GRID={g:j.g, cols:j.cols, rows:j.rows, en0:{e:j.eMin,n:j.nMin}, cLat, cLon, cells};
         FLAT_GRID_SIG=sig;
         const okCnt=cells.filter(c=>c.elev!=null).length;
         if(prog) prog.textContent=`キャッシュ済み標高データを使用（API取得なし）：${okCnt}/${cells.length} 点`;
         drawFlat();
         return;
       }
-      // cols/rows/eMin/nMinが不一致＝キャッシュが今の配置と噛み合っていない → 下のライブ取得へフォールバック
+      // 包含していない＝キャッシュの余裕を超えて動かした → 下のライブ取得へフォールバック
     }catch(e){
       // 取得失敗（404・ネットワークエラー・JSON不正等）→ 下のライブ取得へフォールバック
     }
