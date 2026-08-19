@@ -710,3 +710,97 @@ ABC→XY→DEの3案循環にしたのは意図と違うと指摘。D区画(1170
   回転・倍率変更が反映されリロード後も保持されることを確認、hannan(kouzuPink無し物件)で正しく非表示・
   エラー無しを確認。フルスキャン版で使っていた古いUI文言・関数(toggleKouzuOverlay等)は新方式に置き換え。
 
+## 2026-08-19 D/E（1170-1・1404-4）を実座標（道路・川・C区画境界）から4回目のベクトル化、腱さんの調整UIを追加
+指示書 `docs/task_de_geometry_v2.md`（腱さんが確定値として渡した座標データ・組み立てロジック・UI仕様）を
+そのまま実装。過去3回（公図の手描きピンク線からの機械抽出）は形の推測・面積合わせの作文・モルフォロジー
+処理の帯分断で全て失敗し2026-08-19に撤退・封印していたが、腱さんが「今回はまったく別の方法」として、
+地図タイル上に実在する道路・川・C区画境界をLeafletの地図クリックで直接採取した実座標を指示。座標の
+再計算・再トレースは行わず、指示書の確定値をそのまま使用した（カイシュウ4問は指示書内で回答済み。
+「同じ知識を持つ場所」＝`deAccuracyHintHTML`/`deSubAreaPolys`/`drawSubAreaDE`/`priceSimGroups`はいずれも
+`SITE.subAreaSets.DE`を見るだけの既存設計で複製不要、「同種の既存機能」＝`kouzuAdj`＋`applyDeSplitPercent`
+の合成、と回答済み）。変更分類はB（機能復活＝仕様追加）だが、指示書内で「バグ修正ではなく機能復活のため
+BUGLOG不要」と指定されていたため、この機能追加自体はBUGLOGへ記帳しない（後述の副次バグ1件は別途記帳）。
+
+### 実装内容
+1. **D/E座標データ＋組み立て関数**：`polygonArea()`の直後・`SITES`定義の直前に、指示書の座標
+   （`DE_TIP`/`DE_BC`/`DE_ROAD_PTS`/`DE_RIVER_PTS`/`DE_ABC_EDGE_INTERIOR`、指示書の`tip`/`bc`/`roadPts`/
+   `riverPts`/`abcEdgeInterior`を汎用すぎない名前へ改名しただけで値は無変更）と`buildDeE(eExtent)`/
+   `buildDeD(dExtent)`/`defaultDeExtent()`（既定`{eExtent:2,dExtent:4}`）を新設。
+2. **`SITES.hirai.subAreaSets.DE`を復活**：旧「撤退・封印」コメントは消さず、4回目がなぜ成立するかの
+   説明を追記する形で書き換え。`DE`キーは`pts:buildDeD(defaultDeExtent().dExtent)`のように既存の
+   builder関数を直接呼ぶ形で埋め、座標の手コピーによる転記ミスの余地を無くした（XY案と同じ
+   「初期値はプレースホルダ、起動時にapply系関数が上書き」パターン）。
+3. **`applyDeExtent()`（新設・唯一の書き込み元）**：`eExtent`/`dExtent`から`SITE.subAreaSets.DE`を
+   再生成。面積は指示書の指定どおりABC/XYと同じ`trueAreaOfPts()`（`polygonArea(shapeToLatLngs(...))`）で
+   算出し`no`ラベルへ埋め込む。`adjustDeExtent(which,delta)`（クランプ:E=2〜5/D=2〜8）・`resetDeExtent()`・
+   `saveDeExtent()`/`loadDeExtent()`（localStorageキー`kouteisa_de_extent_<site>`、hiraiでは指示書指定の
+   `kouteisa_de_extent_hirai`と一致）・`updateDeExtentUI()`（表示/非表示・初期ロード）を`kouzuAdj`と
+   同型で新設。
+4. **HTML**：`deExtentWrap`パネル（E/D各々の縮める/広げるボタン＋既定に戻す＋面積表示）を指示書の
+   HTMLそのまま、`kouzuToggleWrap`の直後（同じ「敷地（区画図トレース）」detailsパネル内）に追加。
+5. **`deAccuracyHintHTML()`更新**：ハードコードされていた登記値比較（旧トレースの残骸「D 344㎡/
+   登記466㎡」等）を削除し、`SITE.subAreaSets.DE`から動的に取得した現在面積を埋め込む文言へ変更。
+6. **既存消費側（`deSubAreaPolys`/`drawSubAreaDE`/`priceSimGroups`）は無変更で動作**：いずれも
+   `SITE.subAreaSets.DE`を見るだけの既存設計だったため、DEキューが正しく埋まった時点で自動的に
+   地図描画・価格シミュレーション内訳（DE小計）へ反映されることを実機で確認。
+
+### 実装中に見つけて直したバグ（副次・別途BUGLOG記帳）
+`updateSubAreaToggleUI()`の`#deAccuracyHint`が、同じ関数`deAccuracyHintHTML()`の直上コメント
+「正本はここ1箇所」という宣言に反して、実際には同関数を呼ばず同内容を直書きしていた（5499ef3から
+存在。コメントと実装が最初から食い違っていたコメント-コード乖離）。`accHint.innerHTML=deAccuracyHintHTML()`
+に統一し、`#deAccuracyHint`のHTML側の重複スタイル（`class="hint"`+`color:#e0a458`。`deAccuracyHintHTML()`
+の返り値が既に同じスタイルを持つ二重ラップだったため）も削除。詳細はdocs/BUGLOG.md参照。
+
+### 実装中に見つけて直した設計上の穴（switchSite()の呼び出し順序）
+`applyDeExtent()`は面積算出に`trueAreaOfPts()`（`SITE_XFORM`が必要）を使うが、`switchSite()`内では
+`updateSubAreaToggleUI()`（`#deAccuracyHint`の文言を`deAccuracyHintHTML()`経由で生成）が`drawSite()`
+（`SITE_XFORM`を確定させる`buildSite()`を呼ぶ）より前に実行される既存の順序だった。素朴に
+`updateDeExtentUI()`を`drawSite()`の後ろへ追加しただけでは、`#deAccuracyHint`が新物件へ切り替わった
+直後の一瞬だけ古い`SITE_XFORM`（前物件のもの）で計算した面積、またはプレースホルダ値のまま表示され続ける
+バグを実機で確認した（`eExtent=5,dExtent=8`で保存→他物件→hiraiへ戻すテストで、`#deExtentArea`は正しく
+「889㎡／1548㎡」なのに`#deAccuracyHint`だけ「408㎡／248㎡」のまま、という食い違いを実測）。
+対処：`switchSite()`の`siteAdj=loadSiteAdj();`直後に`buildSite()`（`SITE.shape`/`siteAdj`だけの純計算＋
+`SITE_XFORM`設定という副作用のみ、描画はしない）を追加で呼び、新物件の`SITE_XFORM`を早期に確定。
+`updateDeExtentUI()`は`updateSubAreaToggleUI()`より前に呼ぶ位置へ配置。後段の正式な`drawSite()`は
+同じ入力から`SITE_XFORM`を再計算するだけなので二重計算だが無害（この副作用のみでの早期呼び出しは
+既存の`applyDeSplitPercent(50)`が持っていた同種の潜在的な古い`SITE_XFORM`使用リスクも同時に解消した）。
+
+### 検証（ブラウザ実機、python -m http.server 8934。検証後サーバー停止済み）
+このワーカー環境は`computer{action:"screenshot"}`が「Browser paneが非表示」（`document.visibilityState`
+が`hidden`）で実描画を反映せず、前回セッションと同じ制約のため、Leaflet層・DOM・localStorageの直読みで
+代替検証した（`read_page`のアクセシビリティツリーは`<details>`が閉じていても内容を返すため、実際に
+画面へレンダリングされているテキストの検証に使えた）。
+- **座標の正しさ**：Node.jsで`buildDeE(2)`/`buildDeD(4)`のshoelace面積を計算し248.1㎡/408.1㎡（指示書の
+  「約248㎡」「約408㎡」と一致）を確認。`DE_TIP`(-7.63,49.53)・`DE_BC`(16.49,0.79)が`SITE.shape`の実頂点
+  であること、`DE_ABC_EDGE_INTERIOR`7点が`SITE.shape`上で`bc→tip`の間に完全に同じ順序で並んでいること
+  （＝ABC区画の実境界そのもの）をNode.jsで機械照合。
+- **既定表示**：hirai選択時、`subAreaLayer`に2ポリゴン（D=13点/E=3点、色`#2ecc71`・`dashArray:'4,3'`＝
+  平坦度計算前のABC/XYと同じ見た目）＋2ラベル（「D区画 408㎡」「E区画 248㎡」）を確認。
+- **調整ボタン（実DOM `.click()`で検証、直接関数呼び出しではない）**：E広げるを4回→3(630㎡)→4(1019㎡)→
+  5(1548㎡)→5(クランプで変化なし)、E縮めるを5回→2(248㎡)→2(クランプで変化なし)を確認。D広げるを5回→
+  8(889㎡、17点)→8(クランプ)を確認。既定に戻す→{eExtent:2,dExtent:4}・408㎡/248㎡・13/3点に復帰を確認。
+  各操作で地図ポリゴンの点数・`#deExtentArea`表示・価格シミュレーション表（`DE小計`行）が同時に追従する
+  ことを確認。
+- **localStorage永続化**：`kouteisa_de_extent_hirai`へ`{eExtent,dExtent}`が保存され、リロード後・
+  他物件を経由してのhirai再訪でも復元されることを確認（上記「設計上の穴」の対処後）。
+- **初回アクセス相当（localStorage全クリア）**：クリア後リロード→既定hannan（DEパネル非表示）→実際の
+  `<select onchange>`（`dispatchEvent(new Event('change'))`、直接関数呼び出しではない）でhirai選択→
+  `eExtent:2,dExtent:4`・408㎡/248㎡が正しく初期表示されることを確認。
+- **他物件への無影響**：hannan/camp/furuya/mikokaiの4物件で`deExtentWrap`/`deAccuracyHint`が
+  `display:none`・`subAreaLayer`が0層になることを確認。
+- **価格シミュレーション**：D区画408㎡/E区画248㎡/「DE小計（別地・敷地面積には含まれない）」656㎡が
+  内訳表に表示され、D/E調整のたびに再計算されることを確認。
+- コンソールエラーなし（全テスト工程を通じて`read_console_messages`で確認）。Node.jsで`<script>`全体を
+  `new Function()`により構文チェックOK、LF改行を維持（CRLF混入なし）。
+- **未実施**：上記のとおり実際の画面を人の目で見た最終確認（色の実際の見え方等）はできていない。次回、
+  画面が見える環境または腱さん自身での目視確認を推奨。
+
+### 完了条件
+- 指示書の完了条件・検証項目（常設描画/E・D調整のリアルタイム反映/既定に戻す/初回アクセスでの既定値/
+  他物件無影響）を全て実機で確認済み（目視のスクリーンショット確認のみ未実施、上記のとおり）。
+- カイシュウ4問は指示書`docs/task_de_geometry_v2.md`内で回答済み。ヨコテンは指示書指定どおり対象なし
+  （`ヨコテン:0件`）。実装中に発見した副次バグ1件（accHint/deAccuracyHintHTML）のみ別途BUGLOGへ記帳し、
+  そちらのヨコテン確認（grep）は済0件。
+- 指示書は`docs/task_de_geometry_v2.md`のまま残置（削除は本セッションでは行わず、要否をオーケストレータの
+  判断に委ねる）。
+
