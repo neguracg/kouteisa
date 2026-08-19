@@ -380,6 +380,11 @@
             <div class="hint" style="margin-top:6px">地図上の<b>D区画</b>をドラッグで移動。</div>
           </div>
           <div class="note" id="deArea_D" style="margin-top:6px"></div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px">
+            <span class="muted" style="font-size:11px">面積で指定</span>
+            <input id="deTargetArea_D" type="text" inputmode="decimal" placeholder="例: 466" style="width:70px" oninput="setDeRegionArea('D', parseFloat(this.value))">
+            <span class="muted" style="font-size:11px">㎡（土地管理台帳等の正式面積に合わせて倍率を自動調整）</span>
+          </div>
 
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
             <button class="small primary" id="deAdjBtn_E" onclick="toggleDeAdjust('E')">E区画を調整</button>
@@ -401,6 +406,11 @@
             <div class="hint" style="margin-top:6px">地図上の<b>E区画</b>をドラッグで移動。</div>
           </div>
           <div class="note" id="deArea_E" style="margin-top:6px"></div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px">
+            <span class="muted" style="font-size:11px">面積で指定</span>
+            <input id="deTargetArea_E" type="text" inputmode="decimal" placeholder="例: 251" style="width:70px" oninput="setDeRegionArea('E', parseFloat(this.value))">
+            <span class="muted" style="font-size:11px">㎡（土地管理台帳等の正式面積に合わせて倍率を自動調整）</span>
+          </div>
         </div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
           <button class="small primary" id="siteAdjBtn" onclick="toggleAdjust()">敷地を調整</button>
@@ -1541,6 +1551,16 @@ function resetDeRegion(region){
   saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI();
   map.panTo([deRegionAdj[region].lat, deRegionAdj[region].lon]);
 }
+// 「この面積で指定」欄。土地管理台帳等の正式面積が分かっている時、現在の面積との比の平方根を
+// 倍率へ掛けて一発で目標面積に合わせる（scaleDeRegion(±1%/±5%)の微調整の代わりに使う数値入力版）。
+// 中心・角度は変えない＝倍率だけを動かす。0以下・未入力（NaN）は無視する。
+function setDeRegionArea(region, targetArea){
+  if(!(targetArea>0)) return;
+  const cur=trueAreaOfLL(deRegionLatLngs(region));
+  if(!(cur>0)) return;
+  deRegionAdj[region].scale=Math.max(0.1,Math.min(10, deRegionAdj[region].scale*Math.sqrt(targetArea/cur)));
+  saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI();
+}
 
 /* ====== 物件切替 ====== */
 function populateSiteSel(){
@@ -2301,10 +2321,14 @@ function drawFlat(){
   const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
   const th=flatThresholds();   // legacy方式のときだけ使う（cutfill方式では未使用）
   const half=g/2;
+  // pointInSite()はABCしか見ないため、D/Eのセルは常に「敷地外」扱いの薄い塗り(0.25)になり、
+  // ABC上の鮮やかな色(0.55)と比べてほぼ見えなかった（腱さん指摘2026-08-19「水色と緑が出てこない」）。
+  // D/Eも実在の評価対象地なので、D/E内のセルも「敷地内」と同じ濃さで塗る。
+  const des=deSubAreaPolys();
   cells.forEach(cell=>{
     if(cell.dh==null) return;   // 取得失敗点は塗らない
     const col = FLAT_SCHEME==='legacy' ? legacyCellColor(cell.dh,th) : cutFillColor(cell.dh);
-    const inside=pointInSite(cell.lat,cell.lon);
+    const inside=pointInSite(cell.lat,cell.lon) || des.some(s=>pointInLLPoly(cell.lat,cell.lon,s.latlngs));
     const op=inside?0.55:0.25;   // 敷地内外で濃淡を分ける
     const sw=toLL(cell.e-half,cell.n-half), ne=toLL(cell.e+half,cell.n+half);
     L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:col,fillOpacity:op,interactive:false}).addTo(flatLayer);
