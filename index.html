@@ -2133,7 +2133,12 @@ function optimizePlaneForPurchaseSet(setKey){
   FLAT_PLANES.high={lat:bestCell.lat, lon:bestCell.lon, elev:bestCell.elev};
   activatePlane('high');   // 内部でflatRef差替え・保存・recomputeFlatOnly()（drawFlat()まで）・updatePlanesUI()まで行う
   const prog=document.getElementById('flatProg');
-  if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／高い面）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${best.area.toFixed(0)}㎡が最大`;
+  // 表示する面積は、下の「2面構成」の表と同じ土俵に揃える＝格子の素の合計(best.area)ではなく、
+  // 実測図の面積へ正規化した値(usableAreaOfLL、既存関数)を使う。best.areaは「どの標高が最大か」を
+  // 選ぶための内部スコアであって表示用の値ではない（素の値だと表と1%弱ずれて別物に見える）。
+  // activatePlane()済みなのでc.dhは既にこの高い面基準＝usableAreaOfLLがそのまま使える。
+  const shownArea=polys.reduce((s,p)=>s+(usableAreaOfLL(p.latlngs, usableM)||0), 0);
+  if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／高い面）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${shownArea.toFixed(0)}㎡が最大`;
   updatePlanesUI();
 }
 
