@@ -1427,6 +1427,8 @@ function exportSitePlannerCSV(){
 #     「使える範囲（高低差±${Math.round(thM*100)}cm以内）」境界線。地形により分離した島がある場合は
 #     _1,_2,...の連番で複数系列に分かれます。
 #   high_50cm_1, high_50cm_2,... = 高い面（基準標高${highElev!=null?highElev.toFixed(1)+'m':'未計算のため出力なし'}）の同上。
+#   flat_50cm_1, flat_50cm_2,... = 低い面/高い面の区別が無い物件（単一区画）で、現在の基準点
+#     （基準標高${(!SITE.purchaseSets&&lowElev!=null)?lowElev.toFixed(1)+'m':'—'}）を基準にした同上の境界線。
 # 2列目 seq: 同じdataset内での点の順番（0始まり）。
 # 3列目 x, 4列目 y: 上記座標系での位置（メートル）。
 #
