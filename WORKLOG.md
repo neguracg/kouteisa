@@ -1425,3 +1425,55 @@ click-loggerとLeaflet `map.latLngToContainerPoint()`で正確な変換式を実
   文脈から類推できる可能性は高く実害は小さいと見るが、完全な自己文書化を求めるなら
   `flat_50cm_N`向けの説明を1行足す余地がある。指示書に忠実に実装する方針のため、この場では
   変更していない（オーケストレータ判断待ち）。
+
+## 2026-08-20 平坦度パネル：4件の追加修正（敷地全体の内訳復活・XYラジオのバグ・高い面の数値指定・ブロック統一）
+- 指示書`docs/task_flat_panel_fixes4.md`の1〜4番をそのまま実装（カイシュウ4問は指示書内で回答済み。
+  「同じ知識を持つ場所＝tallyCutFill()」「同種の既存機能＝usableAreaAtElev()の任意標高パターンの横展開」
+  「引っ越しではない」「直前のd0bcb89/5dc41ea等の直接の続き」）。直前のCSVエクスポート機能
+  （`docs/task_siteplanner_export.md`、コミット`82bb49d`/`d68a1e7`）とは競合なし、そのまま両立。
+- **1番（最重要・データ欠落の復旧）**: 「敷地全体」チェックボックス化の際に消えていた4カテゴリ
+  （地ならし/土工/小型擁壁級/造成）×坪の詳細内訳を復活。`tallyCutFillAtElev()`（任意標高版の
+  `tallyCutFill()`、`usableAreaAtElev()`と同じ横展開）と`tallySelectedAreas()`（チェック済み
+  区画・段を1つの仮想区画として合算）を新設。`areaSelectMatrixHTML()`を`areaSelectCheckboxesHTML()`
+  （チェックボックスのみ・パラメータ設定）に分割し、`computeFlatAreasCutFill()`が
+  `regionCardHTML('敷地全体', cutFillBodyHTML(tallySelectedAreas()), true)`で他区画と同じ表を出す
+  よう書き換え。実機確認：チェックボックス変更（A区画・下の段をON）で合計が2356㎡→3356㎡へ即座に
+  追従（A区画の実面積999.9㎡分の増分と一致）。
+- **2番（XYラジオのバグ・実機再現→原因特定→修正）**: 指示書の作業仮説（`populateLowRegionRadios()`の
+  再生成タイミングでチェック状態がリセットされる）は実機で**再現せず**、直接反証した
+  （`toggleSubAreaVariant`実行前後でDOM上のchecked値・区画indexが正しく維持されることをJS計装で確認、
+  かつ`optimizeFlatRef()`が返す「使える面積」もA:598㎡/X:668㎡/Y:825㎡/敷地全体:1482㎡と区画ごとに
+  正しく異なっていた）。真因は別にあった：`bestRefForRegion()`と`optimizePlaneForPurchaseSet()`が、
+  対象区画で絞り込んだセル集合から目標標高(best.elev)を正しく算出した**後**、その標高に最も近い
+  「実在の標高点」を探す最終ステップだけ絞り込み前の`FLAT_GRID.cells`（敷地全体・D/E・周辺含む
+  全グリッド）を再スキャンしていた。DEMが13300セル中213種類しか無い離散値（21.6mが279回、21.5mが
+  275回等）のため複数区画が同じ目標標高に収束しやすく、その場合マーカーが選択区画の外（**時には
+  敷地の外**）の同一地点に固定され「変わっていない」ように見えていた。実機で
+  `bestRefForRegion(A.pts)`と`bestRefForRegion(Y.pts)`が同一lat/lonを返し、かつ`pointInLLPoly`で
+  その点が敷地外(`insideSite:false`)であることを直接検証して特定。修正：両関数の最終スキャンを
+  `FLAT_GRID.cells`ではなく絞り込み済みの`cells`/`inRegion`に変更。修正後は同じ2ケースで
+  `insideA`/`insideX`/`insideY`が全てtrueになることを確認、UIからの実クリックでも緑/黄マーカーが
+  X選択時とY選択時で異なる位置（それぞれX区画・Y区画の内部）に移動することをスクリーンショットで確認。
+  詳細は`docs/BUGLOG.md`参照。
+- **3番（高い面の数値入力）**: `highAnchorControls`に目標標高のテキスト入力＋「この標高で探索」
+  ボタンを追加。`setCdeAnchorByElev()`は`cdeAnchor={lat:null,lon:null,elev:v}`を確定し、既存の
+  `setCdeAnchor()`と同じ「確定→`optimizePlaneForPurchaseSet('CDE')`実行」の流れを共有。
+  `drawCdeAnchor()`は`cdeAnchor.lat==null`（数値直接指定）の時は地図マーカーを描かず、標高の伝達は
+  既存の`cdeAnchorReadout`（`updateCdeAnchorUI()`）に一本化（地図に無関係な位置へラベルを浮かせる
+  案より安全と判断）。**実装中に自分で発見・出荷前に修正**：`loadCdeAnchor()`の有効判定が
+  `j.lat!=null`のままだと数値直接指定分（lat=null）がリロード時に消えるバグになるところだったため、
+  判定を`j.elev!=null`に修正（詳細はBUGLOG参照）。実機確認：「23.5」を入力→探索で、基準標高23.4m・
+  使える面積約423㎡（128.2坪）を取得（21.9m付近＝低い面相当ではなく23m台の結果）。リロード後も
+  `cdeAnchor={lat:null,lon:null,elev:23.5}`が復元されることを確認。
+- **4番（ブロックのタイトル統一・ABC/XYボタンの横並び化）**: `subAreaToggleBtn`（1個クリックで
+  ABC⇔XY循環）を`subAreaSelectBlock`（タイトル「区画割案の選択」＋`planeBtnLow`/`planeBtnHigh`と
+  同じ横並び選択式ボタン）に置き換え。`toggleSubAreaVariant()`を`selectSubAreaVariant(key)`に置換
+  （他に参照が無いことをgrepで確認済みのため`toggleSubAreaVariant`は完全削除、エイリアス不要）。
+  `updateSubAreaToggleUI()`もブロック/ラップ要素を参照するよう書き換え、D/E注意書き・X/Y分割パネルの
+  グレーアウト設計はそのまま維持。
+- **実機検証**（`python -m http.server 8934`、検証後停止済み）：構文チェック（`node --check`相当、
+  inline script 181647文字を評価）OK。全操作を通じてコンソールエラー0件。函南（区画割案・購入
+  シナリオを持たない物件）で「面の選択」「区画割案の選択」ブロック自体が非表示のまま、平坦度計算・
+  敷地全体カード（4カテゴリ×坪の表）が旧来どおり表示され続けることを確認（無回帰）。価格シミュレーション
+  （面積比・使える面積比）も無回帰で動作。
+- 次予定：なし（実装完了、オーケストレータのレビュー・pushを待つ）。
