@@ -267,7 +267,12 @@
         <!-- 高い面ブロック（新規）。purchaseSetsを持つ物件だけ表示。常にC+D+Eが対象＝区画割案(ABC/XY)非連動 -->
         <div id="planeHighBlock" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
           <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:2px">高い面</div>
-          <div class="hint" style="margin:0 0 6px">購入予定の区画セット<b>C+D+E</b>だけで、使える面積が最大になる基準点を探します。今ABC/XYどちらの区画割案を見ていても関係なく、常にC+D+Eが対象です。</div>
+          <div class="hint" style="margin:0 0 6px">購入予定の区画セット<b>C+D+E</b>の中で、狙っている"上の段"（敷地左上の道路など）に近い地点を地図でクリックして指定してください。指定した地点の標高から±3m以内で、使える面積が最大になる基準点を探します（ABC/XYどちらの区画割案を見ていても常にC+D+Eが対象）。</div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <button class="small" id="cdeAnchorBtn" style="flex:1" onclick="toggleCdeAnchorMode()">地図で位置を指定</button>
+            <button class="small" onclick="clearCdeAnchor()">指定解除</button>
+          </div>
+          <div class="note" id="cdeAnchorReadout" style="margin-bottom:6px;display:none"></div>
           <button class="small primary" id="planeHighBtn" style="width:100%" onclick="optimizePlaneForPurchaseSet('CDE')">📍 C+D+Eで使える面積が最大になる基準点を自動選択</button>
         </div>
 
@@ -703,6 +708,7 @@ function updateFlatLegend(){ if(flatLegendDiv) flatLegendDiv.innerHTML=flatLegen
 
 map.on('click', e => {
   if(measureActive){ handleMeasureClick(e.latlng); return; }   // 距離計測モード中は既存のクリック動作(測線配置・平坦度基準点)を抑止
+  if(cdeAnchorMode){ setCdeAnchor(e.latlng); return; }   // 2026-08-20：「高い面」目印点の指定モード中は他の全クリック動作を抑止
   if(VIEW||siteAdjustMode) return;
   if(TOOL==='flat'){ setFlatRef(e.latlng); return; }
   if(BAND_DONE) return;
@@ -2041,6 +2047,52 @@ function drawFlatRef(){
   const txt='基準（道路）標高 '+(flatRef.elev!=null ? flatRef.elev.toFixed(1)+'m' : '取得中…');
   makeLabel(flatRefLayer, L.latLng(flatRef.lat,flatRef.lon), txt, '#ffd166', true);
 }
+/* ====== 「高い面」目印点（cdeAnchor）：moveFlatRef()/drawFlatRef()と同じ「クリック→標高取得→
+   描画→保存」の型を踏襲。ただしflatRefと違い、地図クリックの既定動作ではなく、cdeAnchorModeで
+   明示的に武装した時だけクリックを奪う専用モード（measureActiveと同じパターン。2026-08-20追加） ====== */
+// 「地図で位置を指定」ボタンで武装(cdeAnchorMode=true)した後、地図クリックで目印点を確定する
+// （moveFlatRef()と同じ「クリック→fetchOne()で標高取得→描画→保存」の流れ）。
+async function setCdeAnchor(latlng){
+  cdeAnchorMode=false;
+  updateCdeAnchorUI();
+  const lat=+latlng.lat.toFixed(7), lon=+latlng.lng.toFixed(7);
+  cdeAnchor={lat,lon,elev:null};
+  drawCdeAnchor();
+  const v=await fetchOne(lat,lon);
+  cdeAnchor.elev=v;
+  drawCdeAnchor();
+  saveCdeAnchor();
+  if(v==null){ alert('この地点の標高を取得できませんでした。別の場所をクリックしてください。'); cdeAnchor=null; saveCdeAnchor(); drawCdeAnchor(); return; }
+  updateCdeAnchorUI();
+  if(FLAT_GRID) optimizePlaneForPurchaseSet('CDE');   // 目印点が決まったら、その場で絞り込み探索まで実行する
+}
+function drawCdeAnchor(){
+  cdeAnchorLayer.clearLayers();
+  if(!cdeAnchor) return;
+  makeDot(cdeAnchorLayer,[cdeAnchor.lat,cdeAnchor.lon],'#22c55e',true, ll=>setCdeAnchor(ll));
+  const txt='高い面の目印　標高 '+(cdeAnchor.elev!=null?cdeAnchor.elev.toFixed(1)+'m':'取得中…');
+  makeLabel(cdeAnchorLayer, L.latLng(cdeAnchor.lat,cdeAnchor.lon), txt, '#22c55e', true);
+}
+function toggleCdeAnchorMode(){
+  cdeAnchorMode=!cdeAnchorMode;
+  updateCdeAnchorUI();
+}
+function clearCdeAnchor(){
+  cdeAnchor=null; cdeAnchorMode=false;
+  saveCdeAnchor(); drawCdeAnchor(); updateCdeAnchorUI();
+}
+// ボタン文言・カーソルを現在状態に同期する（updatePlanesUI()の末尾から呼ぶ）
+function updateCdeAnchorUI(){
+  const btn=document.getElementById('cdeAnchorBtn');
+  if(btn) btn.textContent = cdeAnchorMode ? '地図をクリック…' : (cdeAnchor ? '目印点を置き直す' : '地図で位置を指定');
+  map.getContainer().style.cursor = cdeAnchorMode ? 'crosshair' : '';
+  const lbl=document.getElementById('cdeAnchorReadout');
+  if(lbl){
+    const has = cdeAnchor && cdeAnchor.elev!=null;
+    lbl.style.display = has ? 'block' : 'none';
+    lbl.textContent = has ? `目印点の標高：${cdeAnchor.elev.toFixed(1)}m（この±${CDE_ANCHOR_WINDOW_M}m以内で最大の段を探します）` : '';
+  }
+}
 // 取得済みの標高キャッシュ(FLAT_GRID.cells)のまま、基準点だけ変えてdhを再計算・再描画（API再取得なし）
 function recomputeFlatOnly(){
   if(!FLAT_GRID || !flatRef || flatRef.elev==null) return;
@@ -2075,6 +2127,20 @@ function activatePlane(which){
   recomputeFlatOnly();       // ← 内部でdrawFlat()まで走る
   updatePlanesUI();
 }
+// 「高い面」探索の絞り込み用の目印点。腱さんが地図でクリックして指定する（敷地左上の道路など、
+// 本当に狙っている"上の段"を直接指す）。既定はnull＝未指定（未指定のままでは自動選択ボタンは
+// 動かず、先に指定を促す。過去にグローバル探索で意図しない段を選んだ実害があったため、
+// 「指定なしでの見切り発車」を許さない設計にする）。
+let cdeAnchor=null;   // {lat,lon,elev}
+let cdeAnchorMode=false;   // 地図クリック待ちモード中か
+const CDE_ANCHOR_WINDOW_M=3;   // 目印点の標高から±何mのセルだけを探索対象にするか
+function cdeAnchorKey(){ return 'kouteisa_cde_anchor_'+CURRENT_SITE; }
+function saveCdeAnchor(){ try{ if(cdeAnchor) localStorage.setItem(cdeAnchorKey(), JSON.stringify(cdeAnchor)); else localStorage.removeItem(cdeAnchorKey()); }catch(e){} }
+function loadCdeAnchor(){
+  try{ const raw=localStorage.getItem(cdeAnchorKey()); if(raw){ const j=JSON.parse(raw); if(j&&j.lat!=null) return j; } }catch(e){}
+  return null;
+}
+const cdeAnchorLayer=L.layerGroup().addTo(map);
 // 「平ら＋軽い造成で可（=|標高−基準|≦gradeM）」の面積が最大になる基準標高を、与えられたセル集合
 // (FLAT_GRID.cellsの部分集合)だけから探す。原理：各セルの標高eは基準Xが[e-gradeM,e+gradeM]の
 // 範囲にある間だけ「使える」に入る。区間の重なりが最大になるX（区間スタビング）を
@@ -2130,20 +2196,29 @@ function optimizeFlatRef(){
 // 「実在の標高点へ丸める」処理はbestRefForRegion()と同じ考え方を踏襲。
 async function optimizePlaneForPurchaseSet(setKey){
   if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  if(!cdeAnchor || cdeAnchor.elev==null){
+    alert('先に「地図で位置を指定」ボタンを押してから、上の段（道路など）の目印になる地点を地図でクリックしてください。');
+    return;
+  }
   if(flatGridSig()!==FLAT_GRID_SIG){ await generateFlat(); }   // 2026-08-19追加：D/E変更後の陳腐化グリッドで最適化しない
   const polys=purchaseSetPolys(setKey);
   if(!polys.length){ alert('対象区画が見つかりません。'); return; }
   const usableM=currentUsableM();
-  const cells=FLAT_GRID.cells.filter(c=>c.elev!=null && polys.some(p=>pointInLLPoly(c.lat,c.lon,p.latlngs)));
+  // 2026-08-20：C+D+E全体からグローバルに最大の段を探すと、腱さんが意図した"上の段"とは
+  // 別の（面積が偶然大きいだけの）段を拾うことがあった（腱さん指摘）。cdeAnchor（地図クリックで
+  // 指定した目印点）の標高から±CDE_ANCHOR_WINDOW_M以内のセルだけに絞り込んでから最大化することで、
+  // 「腱さんが指した段の中で最大化する」に変える。
+  const cells=FLAT_GRID.cells.filter(c=>c.elev!=null && polys.some(p=>pointInLLPoly(c.lat,c.lon,p.latlngs))
+    && Math.abs(c.elev-cdeAnchor.elev)<=CDE_ANCHOR_WINDOW_M);
   const best=bestUsableAreaForCells(cells, usableM);
-  if(best.elev==null){ alert('対象区画内に有効な標高データがありません。'); return; }
+  if(best.elev==null){ alert('指定した目印点の付近（±'+CDE_ANCHOR_WINDOW_M+'m）に有効な標高データがありません。目印点を置き直してください。'); return; }
   let bestCell=null,bestDiff=Infinity;
   FLAT_GRID.cells.forEach(c=>{ if(c.elev==null) return; const d=Math.abs(c.elev-best.elev); if(d<bestDiff){bestDiff=d;bestCell=c;} });
   FLAT_PLANES.high={lat:bestCell.lat, lon:bestCell.lon, elev:bestCell.elev};
   activatePlane('high');   // 内部でflatRef差替え・保存・recomputeFlatOnly()（drawFlat()まで）・updatePlanesUI()まで行う
   const prog=document.getElementById('flatProg');
   const shownArea=polys.reduce((s,p)=>s+(usableAreaOfLL(p.latlngs, usableM)||0), 0);
-  if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／高い面）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${shownArea.toFixed(0)}㎡が最大`;
+  if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／高い面／目印点±${CDE_ANCHOR_WINDOW_M}m）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${shownArea.toFixed(0)}㎡が最大`;
   updatePlanesUI();
 }
 
@@ -2935,7 +3010,10 @@ function updatePlanesUI(){
   const has=!!SITE.purchaseSets;
   if(highBlock) highBlock.style.display = has?'block':'none';
   if(lowLabel) lowLabel.style.display = has?'block':'none';
-  if(!has){ if(toggleWrap) toggleWrap.style.display='none'; return; }
+  if(!has){ if(toggleWrap) toggleWrap.style.display='none'; cdeAnchor=null; drawCdeAnchor(); return; }
+  cdeAnchor=loadCdeAnchor();   // 2026-08-20追加：物件別に目印点を復元
+  drawCdeAnchor();
+  updateCdeAnchorUI();
 
   const btnLow=document.getElementById('planeBtnLow'), btnHigh=document.getElementById('planeBtnHigh');
   const elevLow=document.getElementById('planeBtnLowElev'), elevHigh=document.getElementById('planeBtnHighElev');

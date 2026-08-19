@@ -1174,3 +1174,99 @@ D/E外周まで拡張」コミットの直接の続き）。
 追記を実行せず、追記案をオーケストレータへの報告に含めた（実ファイルへの反映はユーザー確認後）。
 
 指示書`docs/task_elev_cache_robust.md`は完了につき削除。
+
+## 2026-08-20 「高い面」自動選択を、腱さんが指す目印点±3m以内に絞り込み（グローバル探索を撤退）
+
+腱さんが実機で「CDEで最大のボタン、計算は合ってるかもしれないけど欲しいデータにならなかった。俺が見たいのは
+本当の上の段、CDEにまたがった、敷地左上の道路のレベルに近い高めの段」と指摘。`optimizePlaneForPurchaseSet('CDE')`
+（＝「高い面」自動選択ボタン）がC+D+E全セルから単純に「使える面積が最大になる標高」をグローバルに探しており、
+標高分布が複数の段（プラトー）に分かれる場合に腱さんが意図した段と一致するとは限らない、という指摘。
+指示書`docs/task_cde_anchor.md`（オーケストレータが確定形で用意）にそのまま従い実装。カイシュウ4問は指示書内で
+回答済み（①絞り込み条件はoptimizePlaneForPurchaseSet()のこの1関数のみに追加・複製なし ②moveFlatRef()/
+drawFlatRef()＝クリックで基準点指定→標高取得→描画→保存、と全く同じパターンを踏襲。measureActiveと同じ
+「武装してからクリックを奪う」専用モード ③引っ越し該当なし ④直前コミット（グリッド鮮度チェック追加）への
+直接の追加改修、武装モードのパターンはmeasureActive/siteAdjustMode/kouzuAdjustMode/deAdjustModeに続く4例目）。
+
+- **新しい状態・永続化**（`index.html`）：`cdeAnchor`/`cdeAnchorMode`/`CDE_ANCHOR_WINDOW_M=3`（目印点の
+  標高から±3mのセルだけを探索対象にする定数）、物件別localStorage`kouteisa_cde_anchor_<site>`、
+  `cdeAnchorLayer`（`activatePlane()`の直後に追加）。
+- **`setCdeAnchor()`/`drawCdeAnchor()`/`toggleCdeAnchorMode()`/`clearCdeAnchor()`/`updateCdeAnchorUI()`**
+  を`moveFlatRef()`/`drawFlatRef()`と同型で新設（`drawFlatRef()`の直後に追加）。目印点確定時は
+  `fetchOne()`で標高取得→緑ドット＋ラベル描画→保存→**自動で`optimizePlaneForPurchaseSet('CDE')`を実行**。
+- **`map.on('click', ...)`**に`cdeAnchorMode`の割り込みを追加（`measureActive`の直後、
+  `VIEW||siteAdjustMode`より前＝既存の優先順位パターンを踏襲。距離計測モードが最優先、次に目印点指定
+  モード、という順）。
+- **`optimizePlaneForPurchaseSet()`を書き換え**：`cdeAnchor`未指定なら実行させず「先に『地図で位置を指定』
+  ボタンを押して…」とアラートで指定を促して終了（**グローバル探索へのフォールバックは残さない**＝
+  腱さんが「欲しいデータにならなかった」と言った挙動を二度と出さない設計）。指定済みなら
+  `|cell.elev-cdeAnchor.elev|<=CDE_ANCHOR_WINDOW_M`で絞り込んでから`bestUsableAreaForCells()`を実行。
+  ヒットなしは「指定した目印点の付近（±3m）に有効な標高データがありません」で終了（`FLAT_PLANES.high`は
+  更新しない）。
+- **HTML（`planeHighBlock`）**に「地図で位置を指定」「指定解除」ボタンと標高readout（`#cdeAnchorReadout`、
+  値が無い時は`display:none`で空行を残さない）を追加。
+- **`updatePlanesUI()`**の`if(!has)`判定の直後に`cdeAnchor`のロード・描画・UI同期を追加。`switchSite()`は
+  既に`updatePlanesUI()`を呼んでいるため、`switchSite()`自体は無改修で物件別復元が効く。
+
+### 検証（ブラウザ実機、`.claude/launch.json`の`static`＝`python -m http.server 8934`。検証後サーバー停止済み）
+自動化ツールの`computer`クリックに座標変換の環境固有ズレ（実測比≈4.435倍）があったため、まず
+click-loggerとLeaflet `map.latLngToContainerPoint()`で正確な変換式を実測校正し、以降は校正済み座標で
+**実際のDOMクリック**（`map.on('click',...)`を経由する本物のマウスイベント）を発火させて検証した。
+- **目印点なしで自動選択→アラートのみ・変化なし**：`FLAT_GRID`取得済み・`cdeAnchor=null`の状態で
+  「自動選択」ボタンをクリック→アラート「先に『地図で位置を指定』ボタンを押してから…」を確認、
+  `FLAT_PLANES`/`ACTIVE_PLANE`は無変化（グローバル探索が二度と走らないことを確認）。
+- **目印点クリック→自動的に絞り込み探索**：「地図で位置を指定」→地図上の実在の標高点(35.09447,138.96760、
+  elev25.2m＝CDE内の最高セル)を実クリック→緑ドット＋「高い面の目印　標高 25.2m」ラベルが描画され、
+  自動的に`optimizePlaneForPurchaseSet('CDE')`が実行→`FLAT_PLANES.high`更新・`ACTIVE_PLANE='high'`に
+  切替を確認。
+- **絞り込みが実際に機能していることの実証**：グローバル（無絞り込み）の生スコアを検算すると
+  elev=23.4m/area=467（表示423〜469㎡、既存の「23.4m／約423㎡」と一致）。目印点の標高を系統的に
+  スキャン（25.2/24.2/23.4/22.6/21.6/20.6/19.6/18.6/17.6/16.6/15.6mの11点）した結果、**目印点が
+  概ね20.9m以上（＝21.6m〜25.2mの範囲）だと±3m窓が常に23.4mの段を含んでしまい同じ23.4m/約423〜469㎡に
+  収束**する一方、**目印点20.6m以下では明確に異なる結果**（20.6m/19.6m→22.0m/432㎡、18.6m→21.1m/259㎡、
+  17.6m以下→17.7m/154㎡）に切り替わることを確認。実際に20.6m地点（実在のCDEセル）をクリックして
+  再計算した結果も`FLAT_PLANES.high={elev:22.0}`・進捗文言「基準標高22.0m→使える面積…約430㎡が最大」と
+  なり、グローバル結果（23.4m/423㎡）と**明確に異なる**ことを実クリックで確認済み（＝絞り込みの実装は
+  正しく機能している）。詳細は下の「残った知見」を参照。
+- **目印点付近に有効データなし→アラート**：CDE区画外・elev35.4mの地点（CDE最大値25.2mより10m以上高い）
+  を目印点に指定→アラート「指定した目印点の付近（±3m）に有効な標高データがありません。目印点を
+  置き直してください。」を確認、`FLAT_PLANES.high`は直前の値のまま変化なし（目印点自体は保存される。
+  仕様どおり）。
+- **指定解除**：「指定解除」クリックで`cdeAnchor=null`・`cdeAnchorLayer`のマーカー0件・readout非表示・
+  ボタン文言「地図で位置を指定」に復帰、直後に「自動選択」を押すと再びアラートになることを確認。
+- **他のクリックモードとの優先順位**：`measureActive`と`cdeAnchorMode`を両方trueにして実クリック→
+  `handleMeasureClick`が発火し`setCdeAnchor`は発火しない（`measurePts`が1件増え`cdeAnchor`は不変）ことを
+  確認＝距離計測が最優先。`siteAdjustMode`と`cdeAnchorMode`を両方trueにして実クリック→`setCdeAnchor`が
+  発火する（既存コードの優先順位どおり、目印点指定モードは`VIEW||siteAdjustMode`より前段でクリックを
+  奪う設計）ことを確認。`siteAdjustMode`のみtrue（`cdeAnchorMode`false）では従来どおりクリックが
+  無視される（`flatRef`不変）ことも確認、既存の敷地調整モードの挙動に無回帰。
+- **物件切替での永続化**：`hirai`で目印点を設定→`localStorage['kouteisa_cde_anchor_hirai']`に保存を確認→
+  `switchSite('hannan')`（`purchaseSets`を持たない物件）→`planeHighBlock`非表示・`cdeAnchor=null`・
+  マーカー消去を確認、かつ`hirai`側のlocalStorageは変化なし（他物件のキーに触れない設計どおり）→
+  `switchSite('hirai')`に戻すと`cdeAnchor`・マーカー・readout・ボタン文言が完全に復元されることを確認。
+  ページの完全リロード（`navigate`）でも同様に復元されることを確認。
+- **「クリア」ボタンとの独立性**：`clearFlat()`実行後（`FLAT_GRID`/`FLAT_PLANES`はリセットされる）も
+  `cdeAnchor`とそのマーカーは維持されること（意図どおり。目印点は探索対象の指定であり、探索結果の
+  クリアとは独立の状態）を確認。
+- **`FLAT_GRID`未取得時の目印点クリック**：エラーなく目印点のみ保存され、自動最適化はスキップされる
+  （`if(FLAT_GRID) optimizePlaneForPurchaseSet('CDE');`のガードどおり）ことを確認。
+- コンソールエラー0件（`read_console_messages onlyErrors:true`、全検証を通じて）。構文チェック
+  （`new Function()`でscript全体を評価）もOK。
+
+### 指示書との差異
+なし。指示書のコードをそのまま実装（HTMLの`{{CDE_ANCHOR_WINDOW_M}}`は指定どおりリテラル`3`を埋め込み）。
+
+### 残った知見（要判断・オーケストレータへの報告事項）
+`CDE_ANCHOR_WINDOW_M=3`（既定±3m）は、平井のC+D+E標高分布に対しては**広すぎる可能性がある**。実測：
+グローバル最大の「23.4m／約423㎡」の段は21.4〜24.2m付近に非常に幅広く分布しており（この範囲だけでセル数
+1000超）、21.6m〜25.2m（実質的な最高点。ただし25.2mはCDE内で1セルだけの孤立した突起で、周囲24.8mまで
+0.4mの空白があり本当の意味の「段」ではない）のどこを目印点にしても±3m窓が23.4mの段を丸ごと含んでしまい、
+**同じ23.4m/約423〜469㎡が返る**ことを系統的な実測で確認した。異なる結果が出るのは目印点が概ね20.9m以下の
+場合のみ。つまり**腱さんが実際に「敷地左上の道路」をクリックした地点の標高が21m以上なら、今回の修正後も
+前回と同じ23.4m/423㎡がそのまま出る可能性が高い**。これは実装のバグではない（フィルタリング自体は
+20.6m/17.6m等の目印点で正しく異なる結果を返すことを実測済みで、絞り込みロジックは仕様どおり機能している）。
+もし腱さんが実際にクリックして同じ数字が出た場合、それは「絞り込みが機能していない」のではなく
+「この敷地の地形に対して±3mのウィンドウ幅が広すぎる」ためと考えられる。その場合は`CDE_ANCHOR_WINDOW_M`を
+例えば±1〜1.5m程度に狭める調整が必要になる可能性がある（指示書が確定値として指定した定数のため、
+このワーカー側では変更していない）。
+
+指示書`docs/task_cde_anchor.md`は完了につき削除。
