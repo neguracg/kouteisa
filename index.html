@@ -256,7 +256,7 @@
     </div>
 
     <div class="card tool-flat edit-only">
-      <h2>平坦度判定（道路レベル基準）</h2>
+      <h2>平坦度判定</h2>
       <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
       <div id="flatComputeBlock" style="margin-top:8px;padding:10px;background:#0f1720;border-radius:8px;border:1px solid #2a3542">
         <div class="params" style="grid-template-columns:1fr 1fr">
@@ -264,29 +264,31 @@
           <label>等高線間隔(m)<input id="fContour" type="text" inputmode="decimal" value="0.5"></label>
         </div>
         <button id="flatComputeBtn" class="primary" style="width:100%;margin-top:8px" onclick="generateFlat()">平坦度を計算</button>
-        <!-- 高い面ブロック（新規）。purchaseSetsを持つ物件だけ表示。常にC+D+Eが対象＝区画割案(ABC/XY)非連動 -->
-        <div id="planeHighBlock" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
-          <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:2px">高い面</div>
-          <div class="hint" style="margin:0 0 6px">購入予定の区画セット<b>C+D+E</b>の中で、狙っている"上の段"（敷地左上の道路など）に近い地点を地図でクリックして指定してください。指定した地点の標高から±3m以内で、使える面積が最大になる基準点を探します（ABC/XYどちらの区画割案を見ていても常にC+D+Eが対象）。</div>
-          <div style="display:flex;gap:6px;margin-bottom:6px">
-            <button class="small" id="cdeAnchorBtn" style="flex:1" onclick="toggleCdeAnchorMode()">地図で位置を指定</button>
-            <button class="small" onclick="clearCdeAnchor()">指定解除</button>
+        <!-- 面の選択ブロック（2026-08-20再編）。低い面/高い面ボタン→自動選択ボタン(1つ・文脈依存)→
+             説明文→（低い面時）区画ラジオ／（高い面時）目印点アンカーコントロール、の縦順で統合。
+             SITE.purchaseSetsが無い物件ではtoggleWrap/highAnchorControlsを隠し、実質「自動選択ボタン＋
+             区画選択」だけの旧来の見た目に縮退する（updatePlaneSelectUI()参照）。 -->
+        <div id="planeSelectBlock" style="margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
+          <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:6px">面の選択</div>
+
+          <div id="planeToggleWrap" style="display:none;margin-bottom:8px">
+            <div style="display:flex;gap:6px">
+              <button id="planeBtnLow" class="small" style="flex:1" onclick="selectPlaneFocus('low')">低い面<br><span id="planeBtnLowElev" style="font-weight:400;font-size:10px"></span></button>
+              <button id="planeBtnHigh" class="small" style="flex:1" onclick="selectPlaneFocus('high')">高い面<br><span id="planeBtnHighElev" style="font-weight:400;font-size:10px"></span></button>
+            </div>
           </div>
-          <div class="note" id="cdeAnchorReadout" style="margin-bottom:6px;display:none"></div>
-          <button class="small primary" id="planeHighBtn" style="width:100%" onclick="optimizePlaneForPurchaseSet('CDE')">📍 C+D+Eで使える面積が最大になる基準点を自動選択</button>
-        </div>
 
-        <!-- 低い面の見出し（新規・ラベルのみ）。直後の既存ボタン(optimizeRegionSel + 自動選択ボタン)は無変更 -->
-        <div id="planeLowLabel2" style="display:none;margin-top:8px;font-weight:700;color:#e6edf3;font-size:12px">低い面</div>
-        <select id="optimizeRegionSel" style="width:100%;margin-top:8px;display:none;padding:3px"></select>
-        <button class="small" style="width:100%;margin-top:6px" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button>
+          <button class="small primary" id="planeMaximizeBtn" style="width:100%" onclick="runPlaneMaximize()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button>
+          <div class="hint" id="planeMaximizeHint" style="margin-top:4px"></div>
 
-        <!-- 面の切替（新規）。ラジオではなく横並びボタン2つ。区画割案トグル(subAreaToggleBtn)と似た見た目でよい -->
-        <div id="planeToggleWrap" style="display:none;margin-top:8px">
-          <div class="muted" style="font-size:11px;margin-bottom:4px">地図・結果に表示する面</div>
-          <div style="display:flex;gap:6px">
-            <button id="planeBtnLow" class="small" style="flex:1" onclick="activatePlane('low')">低い面<br><span id="planeBtnLowElev" style="font-weight:400;font-size:10px"></span></button>
-            <button id="planeBtnHigh" class="small" style="flex:1" onclick="activatePlane('high')">高い面<br><span id="planeBtnHighElev" style="font-weight:400;font-size:10px"></span></button>
+          <div id="lowRegionRadios" style="display:none;margin-top:6px"></div>
+
+          <div id="highAnchorControls" style="display:none;margin-top:6px">
+            <div style="display:flex;gap:6px">
+              <button class="small" id="cdeAnchorBtn" style="flex:1" onclick="toggleCdeAnchorMode()">地図で位置を指定</button>
+              <button class="small" onclick="clearCdeAnchor()">指定解除</button>
+            </div>
+            <div class="note" id="cdeAnchorReadout" style="margin-top:4px;display:none"></div>
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
@@ -295,7 +297,6 @@
         </div>
       </div>
       <button id="subAreaToggleBtn" style="width:100%;margin-top:8px;padding:10px;display:none;text-align:left;border-color:#3b82f6" onclick="toggleSubAreaVariant()"></button>
-      <div id="deAccuracyHint" style="display:none;margin-top:4px"></div>
       <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px;transition:opacity .15s">
         <div style="font-weight:700;color:#e6edf3;margin-bottom:4px">X/Y 敷地分割</div>
         <div class="hint" style="margin:0 0 6px">X/Y分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）。<b>X区画</b>が主役：ラインを動かすたびに、その時のX区画だけで「使える面積」が最大になる基準点を自動で探して反映します。</div>
@@ -1242,6 +1243,7 @@ function toggleSubAreaVariant(){
   if(!hasSubAreaVariants()) return;
   const keys=subAreaVariantKeys();   // ABC⇄XYの2択のみ（DEは常設・トグル対象外）
   subAreaVariant=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
+  areaSelectState=null;   // 案を切り替えたら「敷地全体」チェック状態も既定へ作り直す
   updateSubAreaToggleUI();
   drawSiteRefs();
   if(FLAT_GRID) drawFlat();
@@ -1249,11 +1251,10 @@ function toggleSubAreaVariant(){
 function updateSubAreaToggleUI(){
   const btn=document.getElementById('subAreaToggleBtn');
   const panel=document.getElementById('deSplitPanel');
-  const accHint=document.getElementById('deAccuracyHint');
   const priceSim=document.getElementById('priceSimPanel');
-  populateOptimizeRegionSel();   // 区画割の有無に関わらず毎回、選択肢を今の状態に合わせて作り直す
+  populateLowRegionRadios();   // 区画割の有無に関わらず毎回、選択肢を今の状態に合わせて作り直す
   if(!btn) return;
-  if(!hasSubAreaVariants()){ btn.style.display='none'; if(panel) panel.style.display='none'; if(accHint) accHint.style.display='none'; if(priceSim) priceSim.style.display='none'; return; }
+  if(!hasSubAreaVariants()){ btn.style.display='none'; if(panel) panel.style.display='none'; if(priceSim) priceSim.style.display='none'; return; }
   btn.style.display='block';
   const keys=subAreaVariantKeys();   // ABC⇄XYの2択のみ（DEは常設・トグル対象外）
   const other=keys[(keys.indexOf(subAreaVariant)+1)%keys.length];
@@ -1261,17 +1262,8 @@ function updateSubAreaToggleUI(){
   btn.innerHTML=`<span style="font-size:11px;color:#9fb0c0">区画割案</span><br>`+
     `<span style="font-size:17px;font-weight:700;color:#e6edf3">${subAreaVariant}</span>`+
     `<span style="font-size:11px;color:#9fb0c0">　（クリックで${other}案に切替）</span>`;
-  // D/E（実在の隣接2筆1170-1・1404-4）はこの物件にあれば常に地図・表へ出るので、注意書きも
-  // 案の選択(subAreaVariant)に関わらず常時表示する（精度を偽って見せない。座標の出典・詳細は
-  // SITES.hirai.subAreaSets.DEの定義コメント参照）。
-  if(accHint){
-    const showAcc=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
-    accHint.style.display=showAcc?'block':'none';
-    // 文言はdeAccuracyHintHTML()（唯一の正本）から取得する。以前はここに同内容を直書きしており、
-    // 「正本はここ1箇所」というdeAccuracyHintHTML()側のコメントと実装が食い違っていた
-    // （2026-08-19発見・BUGLOG参照）。
-    if(showAcc) accHint.innerHTML=deAccuracyHintHTML();
-  }
+  // D/E注意書き(deAccuracyHintHTML())はここへの二重描画をやめ、結果パネル内「隣接筆（D/E）」見出し
+  // 直前の1箇所だけに一本化した（2026-08-20。旧#deAccuracyHintは削除。docs/BUGLOG.md参照）。
   // X/Y分割パネルは「今ABCやDEを見ているから無関係」なだけで、display:noneで消すとブロックの出現/消失で
   // 画面全体を把握しづらくなる（ユーザー指摘・設計ポリシー化）。常に置いたままグレーアウトで無効化する。
   // ※新DE（実在筆）は%で動かせる固定形状ではないため、ABCと同じく「非アクティブ」扱いでグレーアウトになる。
@@ -1350,15 +1342,31 @@ function usableAreaOfLL(ll, thM){
   });
   return usable*regionAreaScale(trueAreaOfLL(ll), inside);   // 実測図の面積へ正規化
 }
-function priceSimUsableArea(pts, thM){
-  if(!SITE_XFORM) return null;
-  return usableAreaOfLL(shapeToLatLngs(pts, SITE_XFORM), thM);
+// usableAreaOfLL()は「今アクティブな面(flatRef)」からの高低差(c.dh)しか見られない。低い面/高い面を
+// 同時に扱う「敷地全体」チェックボックス表・価格シミュレーションでは、任意の目標標高(targetElev)を
+// 直接指定できる版が要る（2026-08-20新設）。
+function usableAreaAtElev(ll, targetElev, thM){
+  if(!FLAT_GRID || targetElev==null) return 0;
+  const cellArea=FLAT_GRID.g*FLAT_GRID.g;
+  let inside=0, usable=0;
+  FLAT_GRID.cells.forEach(c=>{
+    if(!pointInLLPoly(c.lat,c.lon,ll)) return;
+    inside+=cellArea;
+    if(c.elev!=null && Math.abs(c.elev-targetElev)<=thM) usable+=cellArea;
+  });
+  return usable*regionAreaScale(trueAreaOfLL(ll), inside);
 }
-// D/E（区画ごとに独立調整可能。2026-08-19・6回目）の使える面積：ABCと共有のSITE_XFORMではなく
-// deRegionLatLngs(region)で現在の調整位置を反映する（deSubAreaPolys()と同じ変換の入口を共有）。
-// これが無いと、D/Eを動かしても価格シミュレーションの「使える面積比」だけ動かす前の位置のままになる。
-function priceSimUsableAreaDE(region, thM){
-  return usableAreaOfLL(deRegionLatLngs(region), thM);
+// 区画(key)の「使える面積」＝チェックが入っている段（下/上）の使える面積の合計。
+// 「敷地全体」チェックボックス表と、価格シミュレーションの「使える面積比」の両方がこの関数だけを見る
+// （同じ知識を二重に持たない。腱さん指示「これで使える面積として」）。旧priceSimUsableArea()/
+// priceSimUsableAreaDE()はここに統合され、他に呼び出し元が無いため削除した（2026-08-20）。
+function regionUsableAreaSelected(key, ll, thM){
+  if(!areaSelectState) areaSelectState=defaultAreaSelectState();
+  const st=areaSelectState[key]||{low:false,high:false};
+  let a=0;
+  if(st.low && FLAT_PLANES.low) a+=usableAreaAtElev(ll, FLAT_PLANES.low.elev, thM);
+  if(st.high && FLAT_PLANES.high) a+=usableAreaAtElev(ll, FLAT_PLANES.high.elev, thM);
+  return a;
 }
 // 区画行1本のHTML。基準区画(A)は色付きで区別し「(基準)」を明記する
 function priceSimRowHTML(name, baseName, area, tsuboText, price, f, t, y){
@@ -1378,7 +1386,7 @@ function priceSimGroupRowsHTML(items, label, baseName, areaFn, unit, f, t, y){
   }).join('');
   // DE小計は敷地(ABC)とは別の土地なので、他の小計と一致しないのが正しい挙動。誤りに見えないよう明記する。
   const subtotalLabel = label==='DE' ? 'DE小計（別地・敷地面積には含まれない）' : `${label}小計`;
-  const subtotal=`<tr style="border-top:2px solid #3b82f6;background:#132436;font-weight:700;color:#e6edf3"><td class="l">${subtotalLabel}</td><td>${f(sum)}</td><td>${t(sum)}</td><td>${y(unit*sum)}</td></tr>`;
+  const subtotal=`<tr style="border-top:2px solid #3b82f6;background:#3fa7ff;font-weight:700;color:#0b1520"><td class="l">${subtotalLabel}</td><td>${f(sum)}</td><td>${t(sum)}</td><td>${y(unit*sum)}</td></tr>`;
   return rows+subtotal;
 }
 function renderPriceSim(){
@@ -1392,7 +1400,6 @@ function renderPriceSim(){
   const baseName=base.no.split(/\s+/)[0];
   const baseArea=shoelaceArea(base.pts);
   const groups=priceSimGroups();
-  const totalArea=shoelaceArea(SITE.shape);
 
   const unit1=baseArea>0 ? effPrice/baseArea : 0;   // 万円/㎡（面積比）
   // DE（区画ごとに独立調整可能）はABCと共有のローカル座標系ではないため、r.ptsをそのままshoelaceArea
@@ -1402,35 +1409,39 @@ function renderPriceSim(){
     unit1, f, t, y)).join('');
   let html=`<div class="muted" style="font-size:11px;margin-bottom:6px">基準区画：${baseName}（約${f(baseArea)}㎡・${t(baseArea)}坪）　実効価格 ${y(effPrice)}万円${discountPct?`（${discountPct}%引き）`:''}　単価 ${unit1.toFixed(3)}万円/㎡</div>`;
   html+=`<div style="font-weight:700;color:#e6edf3;margin:4px 0 2px">面積比の試算</div>`
-    + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalArea)}㎡（${t(totalArea)}坪）　→　<b>${y(unit1*totalArea)}万円</b></div>`
     + `<table class="ftab"><tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows1}</table>`;
 
   if(!FLAT_GRID){
     html+=`<div class="hint" style="margin-top:6px">先に「平坦度を計算」を実行すると、使える面積比の試算も出せます。</div>`;
   } else {
     const thM=(parseFloat(document.getElementById('priceSimThreshold').value)||50)/100;
-    const baseUsable=priceSimUsableArea(base.pts, thM)||0;
+    // 2026-08-20：「使える面積比」は「敷地全体」チェックボックス表と同じregionUsableAreaSelected()
+    // を通す（低い面/高い面の選択合計＝腱さん指示「これで使える面積として」）。旧priceSimUsableArea()/
+    // priceSimUsableAreaDE()は廃止（usableAreaOfLL()の定義箇所参照）。
+    const baseUsable=regionUsableAreaSelected(baseName, shapeToLatLngs(base.pts,SITE_XFORM), thM)||0;
     const unit2=baseUsable>0 ? effPrice/baseUsable : 0;
-    const totalUsable=priceSimUsableArea(SITE.shape, thM)||0;
     const rows2=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName,
-      g.label==='DE' ? (r=>priceSimUsableAreaDE(r.key, thM)||0) : (r=>priceSimUsableArea(r.pts, thM)||0),
+      g.label==='DE' ? (r=>regionUsableAreaSelected(r.key, deRegionLatLngs(r.key), thM)||0)
+                     : (r=>regionUsableAreaSelected(r.no.split(/\s+/)[0], shapeToLatLngs(r.pts,SITE_XFORM), thM)||0),
       unit2, f, t, y)).join('');
     html+=`<div style="font-weight:700;color:#e6edf3;margin:8px 0 2px">使える面積比(±${(thM*100).toFixed(0)}cm)の試算</div>`
-      + `<div style="font-size:12px;margin-bottom:4px">敷地全体（概算）　約${f(totalUsable)}㎡（${t(totalUsable)}坪）　→　<b>${y(unit2*totalUsable)}万円</b></div>`
       + `<table class="ftab">${baseUsable>0?'':'<caption style="color:#e07a4a">基準区画(A)の使える面積が0のため試算できません</caption>'}<tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
   }
   el.innerHTML=html;
 }
-// 「使える面積最大化」ボタンの対象（敷地全体／各区画）を選べるプルダウンを、現在の区画割案に
-// 合わせて作り直す（区画割を持たない物件では非表示＝従来どおり敷地全体のみのボタンに戻る）。
-function populateOptimizeRegionSel(){
-  const sel=document.getElementById('optimizeRegionSel');
-  if(!sel) return;
+// 「使える面積最大化」ボタンの対象（敷地全体／各区画）を選べるラジオボタンを、現在の区画割案に
+// 合わせて作り直す（区画割を持たない物件では空のまま＝従来どおり敷地全体のみのボタンに戻る）。
+// 2026-08-20：旧<select id="optimizeRegionSel">版を置き換え（「面の選択」ブロック内のラジオへ統合）。
+function populateLowRegionRadios(){
+  const wrap=document.getElementById('lowRegionRadios');
+  if(!wrap) return;
   const subs=currentSubAreas();
-  if(!subs || !subs.length){ sel.style.display='none'; sel.innerHTML=''; return; }
-  sel.innerHTML='<option value="-1">敷地全体を最適化</option>'
-    + subs.map((s,i)=>`<option value="${i}">${s.no.split(/\s+/)[0]}を最適化</option>`).join('');
-  sel.style.display='block';
+  if(!subs || !subs.length){ wrap.innerHTML=''; return; }
+  const prevChecked=(document.querySelector('input[name="lowRegion"]:checked')||{}).value ?? '-1';
+  const opts=[['-1','敷地全体を最大化'], ...subs.map((s,i)=>[String(i), s.no.split(/\s+/)[0]+'を最大化'])];
+  wrap.innerHTML=opts.map(([v,label])=>
+    `<label style="display:block;font-size:12px;margin-top:2px;cursor:pointer"><input type="radio" name="lowRegion" value="${v}" ${String(v)===String(prevChecked)?'checked':''}> ${label}</label>`
+  ).join('');
 }
 // 調整用の参照地番（周辺筆refShapes＝敷地の外）＋内部分割（現在選択中の区画割案＝敷地の中）。
 // siteAdjustMode中だけ、メイン敷地と同じSITE_XFORMで描画。
@@ -1635,6 +1646,8 @@ function switchSite(id){
   resetCliffPoints();   // 測線の点を新しい敷地の近くへ戻す（前物件の座標が残る問題の修正）
   updateKouzuToggleUI();   // 公図スキャン重ね表示：物件ごとに有無が違うのでトグルの表示/非表示とOFFへ戻す
   subAreaVariant = SITE.subAreaSets ? (SITE.subAreaDefault||Object.keys(SITE.subAreaSets)[0]) : null;
+  areaSelectState=null;    // 「敷地全体」チェック状態も物件ごとにリセット（次回描画時にdefaultAreaSelectState()で作り直す）
+  planeFocusMode='low';    // 「面の選択」の注目先も物件ごとに低い面へ戻す
   if(SITE.splitAxis) applyDeSplitPercent(50);   // XY分割は物件を切り替えるたび50%に戻す
   // D/E個別調整：前物件の調整モードを引き継がない（残ると誤ってドラッグできてしまう＝事故る。
   // 上のupdateKouzuToggleUI()がkouzuAdjustModeをリセットしているのと同じ扱い）。DOM側（ボタン文言・
@@ -2117,6 +2130,49 @@ function loadFlatPlanes(){
   }catch(e){}
   FLAT_PLANES={low:null, high:null}; ACTIVE_PLANE='low';
 }
+/* ====== 「面の選択」ブロックの状態（2026-08-20再編） ======
+   planeFocusMode＝ブロックのどちら（低い面/高い面）に注目しているかのUI状態（purchaseSetsが無い
+   物件では常に'low'扱い＝トグル自体を隠す。updatePlaneSelectUI()参照）。
+   areaSelectState＝「敷地全体」チェックボックス表に積む区画×段（低い面/高い面）の選択状態。
+   物件・区画割案(ABC⇔XY)を切り替えたらnullにして、次回描画時にdefaultAreaSelectState()で作り直す
+   （switchSite()／toggleSubAreaVariant()から）。 */
+let planeFocusMode='low';
+let areaSelectState=null;
+// 既定：ABC案はC区画、XY案はX区画（腱さんが購入検討している区画）だけ上下両方チェック、D/Eは
+// 上の段のみ既定チェック。2026-08-20実測で発見：「配列の最後の要素が主役」という判定はABC配列
+// （[A,B,C]・Cが末尾）では成り立つが、XY配列はapplyDeSplitPercent()実行後は[X区画,Y区画]
+// （Xが"主役＝先頭"というbuild_split2.py由来の設計でXが先頭）に並ぶため、末尾で判定すると
+// 誤ってY区画が主役扱いになる。配列内の位置ではなく区画名で判定する。
+function defaultAreaSelectState(){
+  const state={};
+  const variantKeys=SITE.subAreaSets ? Object.keys(SITE.subAreaSets).filter(k=>k!=='DE') : [];
+  variantKeys.forEach(vk=>{
+    const subs=SITE.subAreaSets[vk]||[];
+    subs.forEach(s=>{
+      const key=s.no.split(/\s+/)[0];
+      const isMain=(key==='C区画' || key==='X区画');
+      state[key]={low:isMain, high:isMain};
+    });
+  });
+  if(!variantKeys.length && SITE.subAreas){   // 単一案のみの物件（将来拡張用。現状は使われない）
+    SITE.subAreas.forEach((s,i,arr)=>{
+      const key=s.no.split(/\s+/)[0];
+      state[key]={low:i===arr.length-1, high:i===arr.length-1};
+    });
+  }
+  if(SITE.subAreaSets && SITE.subAreaSets.DE){
+    state.D={low:false, high:true};
+    state.E={low:false, high:true};
+  }
+  return state;
+}
+function toggleAreaSelect(key, tier, checked){
+  if(!areaSelectState) areaSelectState=defaultAreaSelectState();
+  if(!areaSelectState[key]) areaSelectState[key]={low:false,high:false};
+  areaSelectState[key][tier]=checked;
+  computeFlatAreas();   // 「敷地全体」チェックボックス表の再描画（既存ディスパッチャを再利用）
+  renderPriceSim();     // 使える面積比はこのチェック状態を直接参照するため、同時に追従させる（腱さん指示）
+}
 // 指定の面を地図の基準点(flatRef)に載せて再計算・再描画する（面の切替＝この1関数だけ）
 function activatePlane(which){
   const p=FLAT_PLANES[which];
@@ -2133,7 +2189,7 @@ function activatePlane(which){
 // 「指定なしでの見切り発車」を許さない設計にする）。
 let cdeAnchor=null;   // {lat,lon,elev}
 let cdeAnchorMode=false;   // 地図クリック待ちモード中か
-const CDE_ANCHOR_WINDOW_M=3;   // 目印点の標高から±何mのセルだけを探索対象にするか
+const CDE_ANCHOR_WINDOW_M=1;   // 目印点の標高から±何mのセルだけを探索対象にするか（2026-08-20：3mだとC+D+E内の21.4〜24.2m全体を飲み込みグローバル探索と同値に収束したため1mへ狭めた）
 function cdeAnchorKey(){ return 'kouteisa_cde_anchor_'+CURRENT_SITE; }
 function saveCdeAnchor(){ try{ if(cdeAnchor) localStorage.setItem(cdeAnchorKey(), JSON.stringify(cdeAnchor)); else localStorage.removeItem(cdeAnchorKey()); }catch(e){} }
 function loadCdeAnchor(){
@@ -2163,13 +2219,13 @@ function bestUsableAreaForCells(cells, gradeM){
   return {area:Math.max(0,best), elev};
 }
 // 敷地全体、または選択中の区画（A/B/C・X/Y等）から「平ら＋軽い造成で可」が最大になる基準点を探す
-// （API呼び出しなし）。対象は#optimizeRegionSelで選ぶ（区画割を持たない物件では常に敷地全体）。
-// 実在する標高点の中から目標標高に一番近い点を採用。
+// （API呼び出しなし）。対象は「面の選択」ブロックのラジオ(input[name=lowRegion])で選ぶ
+// （区画割を持たない物件では常に敷地全体）。実在する標高点の中から目標標高に一番近い点を採用。
 function optimizeFlatRef(){
   if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
   const usableM=currentUsableM();
-  const sel=document.getElementById('optimizeRegionSel');
-  const idx = (sel && sel.style.display!=='none') ? parseInt(sel.value,10) : -1;
+  const checkedRadio=document.querySelector('input[name="lowRegion"]:checked');
+  const idx = checkedRadio ? parseInt(checkedRadio.value,10) : -1;
   const subs=currentSubAreas();
   const region = (idx>=0 && subs && subs[idx]) ? subs[idx] : null;
   const targetPts = region ? region.pts : SITE.shape;
@@ -2179,14 +2235,17 @@ function optimizeFlatRef(){
   const best=bestRefForRegion(targetPts, usableM);
   if(!best || !best.cell){ alert(`${label}内に有効な標高データがありません。`); return; }
   flatRef={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev, hsrc: flatRef?flatRef.hsrc:null};
+  // 2026-08-19：このボタンが決めた面は「低い面」として別枠に保持する（既存の挙動・上のロジックは無変更）。
+  // 2026-08-20：FLAT_PLANES.lowの代入はrecomputeFlatOnly()より前に置く（実測で発見した順序バグの修正）。
+  // recomputeFlatOnly()は内部でdrawFlat()→computeFlatAreas()まで進み、新設の「敷地全体」チェックボックス表・
+  // 価格シミュレーションはFLAT_PLANES.lowを直接参照するため、後に代入すると初回描画が常に0㎡になっていた。
+  FLAT_PLANES.low={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev};
+  ACTIVE_PLANE='low';
   drawFlatRef(); saveFlatRef();
   recomputeFlatOnly();
   const prog=document.getElementById('flatProg');
   const tsubo=x=>(x/3.305785).toFixed(1);
   if(prog) prog.textContent=`自動選択（${label}）：基準標高${best.cell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${best.area.toFixed(0)}㎡（${tsubo(best.area)}坪）が最大`;
-  // 2026-08-19：このボタンが決めた面は「低い面」として別枠に保持する（既存の挙動・上のロジックは無変更）。
-  FLAT_PLANES.low={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev};
-  ACTIVE_PLANE='low';
   saveFlatPlanes();
   updatePlanesUI();
 }
@@ -2721,7 +2780,8 @@ function hsrcNoteText(){
   return (flatRef && flatRef.hsrc) ? `国土地理院DEM（当地点は${flatRef.hsrc}。データ源は地点により異なる）` : '国土地理院DEM（データ源は地点により異なる＝5mメッシュとは限らない）';
 }
 // DE（実在の隣接2筆 1170-1/1404-4）がこの物件にある時は常に出す精度注意書き（正本はここ1箇所。
-// 表示箇所は複数：updateSubAreaToggleUI()の#deAccuracyHint、区画別内訳の「隣接筆（D/E）」見出し直下）。
+// 表示箇所も1箇所のみ：区画別内訳の「隣接筆（D/E）」見出し直下。旧#deAccuracyHintへの二重描画は
+// 廃止した＝2026-08-20、docs/BUGLOG.md参照）。
 // 精度を偽って見せないための表示。DEは常設（案の選択subAreaVariantに関わらず出る）なので、この関数の
 // 条件もSITEにDEがあるかどうかだけで判定する。面積はdeSubAreaPolys()（deRegionAdjで個別調整した
 // 現在位置・倍率を反映）から動的に算出する。固定文言に数値を焼き込まない＝正規化の原則
@@ -2808,11 +2868,42 @@ function cutFillBodyHTML(r){
   const combined=[0,1,2,3].map(i=> r.cut[i]+r.fill[i]);   // 面積表は切土/盛土を合算
   return volLine + cutFillAreaTableHTML(combined);
 }
+// 「敷地全体」の区画×段チェックボックス表（区画割案を持つ物件だけ。現状は平井のみ）。
+// 合計はregionUsableAreaSelected()の1本を通す＝価格シミュレーションの「使える面積比」と数字が
+// 二重管理にならない（腱さん指示「これで使える面積として」）。
+function areaSelectMatrixHTML(){
+  if(!areaSelectState) areaSelectState=defaultAreaSelectState();
+  const subs=currentSubAreas()||[];
+  const thM=currentUsableM();
+  const rows=[
+    ...subs.map(s=>({key:s.no.split(/\s+/)[0], ll:shapeToLatLngs(s.pts,SITE_XFORM)})),
+    ...(SITE.subAreaSets&&SITE.subAreaSets.DE ? deSubAreaPolys().map(s=>({key:s.key, ll:s.latlngs})) : [])
+  ];
+  let total=0;
+  const rowsHtml=rows.map(r=>{
+    const st=areaSelectState[r.key]||{low:false,high:false};
+    const a=regionUsableAreaSelected(r.key, r.ll, thM);
+    total+=a;
+    return `<tr><td class="l">${r.key}</td>`
+      + `<td><label style="cursor:pointer"><input type="checkbox" ${st.low?'checked':''} ${FLAT_PLANES.low?'':'disabled'} onchange="toggleAreaSelect('${r.key}','low',this.checked)"> 下の段</label></td>`
+      + `<td><label style="cursor:pointer"><input type="checkbox" ${st.high?'checked':''} ${FLAT_PLANES.high?'':'disabled'} onchange="toggleAreaSelect('${r.key}','high',this.checked)"> 上の段</label></td>`
+      + `<td>${a.toFixed(0)}㎡</td></tr>`;
+  }).join('');
+  // 合計行：本文と同系統の暗色(#132436)は境目が弱いという1-dの指摘と同じ理由で、ここも明るい
+  // アクセント色に反転する（新設と同時に同じ見づらさを持ち込まないため。1-dと同じ視認性方針）。
+  return `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">敷地全体（区画・段を選んで合計）</div>`
+    + `<table class="ftab"><tr><th>区画</th><th colspan="2">含める段</th><th>使える面積</th></tr>${rowsHtml}`
+    + `<tr style="border-top:2px solid #3b82f6;background:#3fa7ff;font-weight:700;color:#0b1520"><td class="l" colspan="3">合計</td><td>${total.toFixed(0)}㎡（${(total/3.305785).toFixed(1)}坪）</td></tr></table>`;
+}
 function computeFlatAreasCutFill(el){
   const all=tallyCutFill(pointInSite, siteTrueAreaM2());
-  let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`
-    + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">高低差ごとの面積一覧</div>`
-    + regionCardHTML('敷地全体', cutFillBodyHTML(all), true);
+  let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`;
+  if(currentSubAreas()){
+    html += areaSelectMatrixHTML();   // 区画割案を持つ物件：チェックボックス式合計
+  } else {
+    html += `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">高低差ごとの面積一覧</div>`
+      + regionCardHTML('敷地全体', cutFillBodyHTML(all), true);   // 単一区画の物件：既存のまま無変更
+  }
   const subs=subAreaPolys();
   if(subs.length){
     html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
@@ -3001,34 +3092,54 @@ function updateFlatComputeBtnState(){
   btn.textContent = ready ? '平坦度を計算　（取得済み・基準点の変更は自動反映されます）' : '平坦度を計算';
   updatePlanesUI();
 }
-// 基準面パネル（高い面ブロック／低い面ラベル／切替ボタン）の表示を、現在のFLAT_PLANES/ACTIVE_PLANEに
-// 同期する。SITE.purchaseSetsを持つ物件（現状は平井のみ）だけ表示。
-function updatePlanesUI(){
-  const highBlock=document.getElementById('planeHighBlock');
-  const lowLabel=document.getElementById('planeLowLabel2');
-  const toggleWrap=document.getElementById('planeToggleWrap');
+// 「面の選択」ブロックの選択（低い面／高い面のどちらに注目しているか）を切り替える。
+// 既に計算済みの面ならその場で地図・結果パネルも切り替える（activatePlane()を再利用）。
+function selectPlaneFocus(which){
+  planeFocusMode=which;
+  if(FLAT_PLANES[which]) activatePlane(which);   // 内部でupdatePlanesUI()（→updatePlaneSelectUI()）まで呼ぶ
+  updatePlaneSelectUI();
+}
+// 「使える面積(平ら+軽造成)が最大になる基準点を自動選択」ボタン（1つだけ）の実処理を、
+// 今どちらに注目しているか(planeFocusMode)で振り分ける文脈依存ボタン。
+function runPlaneMaximize(){
+  if(!SITE.purchaseSets || planeFocusMode==='low') optimizeFlatRef();
+  else optimizePlaneForPurchaseSet('CDE');
+}
+// 「面の選択」ブロック本体の表示を、現在のFLAT_PLANES/planeFocusMode/cdeAnchorに同期する。
+// low/high選択ボタンは「まだ計算していない面」でも押せる（disabledにしない）＝高い面へ切り替えて
+// 初めて目印点コントロールに到達できる設計のため、計算前にボタンを封じると詰む（2026-08-20）。
+function updatePlaneSelectUI(){
   const has=!!SITE.purchaseSets;
-  if(highBlock) highBlock.style.display = has?'block':'none';
-  if(lowLabel) lowLabel.style.display = has?'block':'none';
-  if(!has){ if(toggleWrap) toggleWrap.style.display='none'; cdeAnchor=null; drawCdeAnchor(); return; }
+  const toggleWrap=document.getElementById('planeToggleWrap');
+  if(toggleWrap) toggleWrap.style.display = has ? 'block' : 'none';
+  if(has){
+    const btnLow=document.getElementById('planeBtnLow'), btnHigh=document.getElementById('planeBtnHigh');
+    if(btnLow) btnLow.classList.toggle('primary', planeFocusMode==='low');
+    if(btnHigh) btnHigh.classList.toggle('primary', planeFocusMode==='high');
+    const elevLow=document.getElementById('planeBtnLowElev'), elevHigh=document.getElementById('planeBtnHighElev');
+    if(elevLow) elevLow.textContent = FLAT_PLANES.low ? FLAT_PLANES.low.elev.toFixed(1)+'m' : '未計算';
+    if(elevHigh) elevHigh.textContent = FLAT_PLANES.high ? FLAT_PLANES.high.elev.toFixed(1)+'m' : '未計算';
+  }
+  const isLow = !has || planeFocusMode==='low';
+  const lowWrap=document.getElementById('lowRegionRadios'), highWrap=document.getElementById('highAnchorControls');
+  if(lowWrap) lowWrap.style.display = isLow ? 'block':'none';
+  if(highWrap) highWrap.style.display = isLow ? 'none':'block';
+  const hint=document.getElementById('planeMaximizeHint');
+  if(hint) hint.textContent = isLow
+    ? '選んだ区画（下のボタン）の中で、使える面積が最大になる基準点を自動で探します。'
+    : `購入予定の区画セット C+D+E の中で、指定した目印点（下のボタンで地図クリック）の標高から±${CDE_ANCHOR_WINDOW_M}m以内に絞り込み、使える面積が最大になる基準点を探します。`;
+  if(typeof updateCdeAnchorUI==='function') updateCdeAnchorUI();
+  populateLowRegionRadios();
+}
+// 基準面（低い面/高い面）に関する物件別状態（目印点の復元）を同期し、「面の選択」ブロックの
+// 表示更新(updatePlaneSelectUI)を呼ぶ。物件切替のたびに呼ばれる（switchSite()参照）ほか、
+// drawFlat()の末尾からも毎回呼ばれる。
+function updatePlanesUI(){
+  const has=!!SITE.purchaseSets;
+  if(!has){ cdeAnchor=null; drawCdeAnchor(); updatePlaneSelectUI(); return; }
   cdeAnchor=loadCdeAnchor();   // 2026-08-20追加：物件別に目印点を復元
   drawCdeAnchor();
-  updateCdeAnchorUI();
-
-  const btnLow=document.getElementById('planeBtnLow'), btnHigh=document.getElementById('planeBtnHigh');
-  const elevLow=document.getElementById('planeBtnLowElev'), elevHigh=document.getElementById('planeBtnHighElev');
-  const bothSet = !!(FLAT_PLANES.low && FLAT_PLANES.high);
-  if(toggleWrap) toggleWrap.style.display = bothSet ? 'block' : 'none';
-  if(btnLow){
-    btnLow.disabled = !FLAT_PLANES.low;
-    btnLow.classList.toggle('primary', ACTIVE_PLANE==='low');
-  }
-  if(btnHigh){
-    btnHigh.disabled = !FLAT_PLANES.high;
-    btnHigh.classList.toggle('primary', ACTIVE_PLANE==='high');
-  }
-  if(elevLow) elevLow.textContent = FLAT_PLANES.low ? `${FLAT_PLANES.low.elev.toFixed(1)}m` : '未設定';
-  if(elevHigh) elevHigh.textContent = FLAT_PLANES.high ? `${FLAT_PLANES.high.elev.toFixed(1)}m` : '未設定';
+  updatePlaneSelectUI();
 }
 ['fFlatCm','fGradeCm','fSteepCm','fContour'].forEach(id=>{
   const elx=document.getElementById(id);

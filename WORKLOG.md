@@ -1270,3 +1270,86 @@ click-loggerとLeaflet `map.latLngToContainerPoint()`で正確な変換式を実
 このワーカー側では変更していない）。
 
 指示書`docs/task_cde_anchor.md`は完了につき削除。
+
+## 2026-08-20 平坦度パネル大改修（面の選択ブロック統合・敷地全体のチェックボックス化・使える面積の一本化）
+指示書`docs/task_plane_ui_v3.md`（腱さんの一連の実機指摘を反映して作成）を実装。カイシュウ4問は
+指示書内で回答済み（前提セクション参照）。実装後に指示書は削除。
+
+### 実装内容
+1. **最優先**：`CDE_ANCHOR_WINDOW_M`を`3`→`1`に変更（前回実装のC+D+E絞り込み幅が広すぎ、21m以上の
+   目印点でグローバル探索と同じ23.4m/約423〜469㎡に収束してしまう問題の修正）。
+2. 小さい修正4件：タイトルを「平坦度判定」のみに短縮／D/E注意書きの二重表示を解消（`updateSubAreaToggleUI()`
+   内の`#deAccuracyHint`への描画をやめ、結果パネル内「隣接筆（D/E）」見出し直前の1箇所に一本化。
+   `#deAccuracyHint`要素自体もHTMLから削除）／価格シミュレーション2表の「敷地全体（概算）→◯◯万円」
+   冗長行を削除（`totalArea`/`totalUsable`変数ごと削除）／小計行を明るいアクセント色反転
+   (`background:#3fa7ff;color:#0b1520`)で視認性向上。
+3. 「面の選択」ブロックへ統合：`planeSelectBlock`を新設し、見出し→低い面/高い面ボタン→自動選択ボタン
+   （1つ・`planeFocusMode`で`optimizeFlatRef()`/`optimizePlaneForPurchaseSet('CDE')`を振り分け）→
+   説明文→（低い面時）区画ラジオ／（高い面時）cdeAnchorコントロール、の縦順で配置。旧
+   `<select id="optimizeRegionSel">`は`input[name=lowRegion]`ラジオへ、`planeHighBlock`/`planeLowLabel2`は
+   統合ブロックへ置き換え。`updatePlanesUI()`を`updatePlaneSelectUI()`と役割分担するよう再編（低い面/高い面
+   ボタンはdisabledにしない＝computed前でも「高い面」タブへ到達できないと詰むため意図的に踏襲しない）。
+4. 「敷地全体」を区画×段（低い面/高い面）のチェックボックス表に作り替え（`areaSelectState`/
+   `defaultAreaSelectState()`/`toggleAreaSelect()`/`areaSelectMatrixHTML()`新設）。既定はABC案→C区画、
+   XY案→X区画が上下両方チェック、D/Eは上の段のみチェック。`SITE.subAreaSets`を持たない物件（函南等）は
+   従来どおり固定「敷地全体」カードのまま無変更（`computeFlatAreasCutFill()`で分岐）。
+5. 価格シミュレーションの「使える面積比」を4番と同じ`regionUsableAreaSelected()`に統一（`usableAreaAtElev()`
+   新設。旧`priceSimUsableArea()`/`priceSimUsableAreaDE()`は呼び出し元が無くなったため削除）。
+
+### 指示書との差異（実装時に発見し、指示書のコード例から変更した箇所）
+- **`defaultAreaSelectState()`を「今表示中の案(`currentSubAreas()`)だけ」ではなく「ABC/XY全案ぶんの
+  キーをまとめて作る」よう拡張**。指示書のコード例どおりだと、価格シミュレーションが常時表示する
+  「ABC」グループ（`priceSimGroups()`は案の選択に関わらず常にABC小計を出す設計）が、XY案表示中は
+  `areaSelectState`にA/B/C区画のキーが無く常に0㎡になる（`regionUsableAreaSelected()`を敷地全体表と
+  価格シミュレーションが共有する以上、必然的に発生する）。実機で発見・その場で修正し、XY表示中でも
+  ABC小計が正しく非ゼロで出ることを確認した。
+- **`defaultAreaSelectState()`の主役判定を「配列の最後の要素」から「区画名（'C区画'/'X区画'）」に変更**。
+  ABC配列は`[A,B,C]`でCが末尾のため指示書のロジックで正しいが、XY配列は`applyDeSplitPercent()`実行後
+  `[X区画,Y区画]`（Xが"主役＝先頭"という`build_split2.py`由来の設計で先頭に来る）に並ぶため、末尾判定
+  だと誤ってY区画が主役扱いになっていた。実機でXY案に切り替えて`areaSelectState`を確認し発見・修正。
+- **`toggleAreaSelect()`に`renderPriceSim()`呼び出しを追加**（指示書は`computeFlatAreas()`のみ）。
+  完了条件「区画のチェックを変えると価格シミュレーションの数値も追従する」を満たすには、チェック変更時に
+  価格シミュレーションパネルも明示的に再描画する必要があった（`computeFlatAreas()`は`#flatResult`しか
+  更新しないため）。
+- **`optimizeFlatRef()`内で`FLAT_PLANES.low`の代入を`recomputeFlatOnly()`より前に移動**（指示書は
+  「無変更」と明記していた既存コードだが、代入順序が新機能の前提と噛み合っていなかった）。既存コードは
+  `flatRef`設定→`recomputeFlatOnly()`（内部で`drawFlat()`→`computeFlatAreas()`まで実行）→
+  `FLAT_PLANES.low=...`という順序だった。新設のチェックボックス表・価格シミュレーションは
+  `FLAT_PLANES.low`を直接参照するため、この順序のままだと初回描画時は常にnull→0㎡表示になる
+  （実機で「自動選択」を押しても表が0のままになることで発見。手動で`regionUsableAreaSelected()`を
+  直接呼ぶと正しい値が返ることを確認し、実行順序の問題と特定）。高い面側の`optimizePlaneForPurchaseSet()`
+  は元々`FLAT_PLANES.high`設定→`activatePlane('high')`の順で問題なかったため対象外。
+- 小計行の色反転（1-dの指摘対象は`priceSimGroupRowsHTML()`のみ）を、新設`areaSelectMatrixHTML()`の
+  「合計」行にも同じ理由で適用（指示書のコード例はここだけ旧`#132436`のままだったが、同じコミットで
+  新設する行に既知の見づらさをそのまま持ち込むのは避けた）。
+
+### 動作確認（python -m http.server 8934、ブラウザ自動操作+JS直接実行で検証、検証後サーバー停止済み）
+- タイトル「平坦度判定」のみ／D/E注意書き1回のみ表示／価格シミュレーション2表とも「敷地全体（概算）」
+  行が消えていることをget_page_text/innerHTMLで確認。
+- 「面の選択」ブロックの縦順（低い面/高い面ボタン→自動選択ボタン→説明文→ラジオ/アンカー）を
+  read_page/get_page_textで確認。
+- **CDE_ANCHOR_WINDOW_M=1の絞り込み効果**（C+D+E内訳: 21m台328セル/22m台356セル/23m台423セル/
+  24m台67セル、グローバル最適=23.4m・約467㎡）：21.0m地点をcdeAnchorに指定→21.5m・約365㎡（グローバル
+  23.4m/467㎡とは異なる値に収束＝絞り込み機能）。20.6m地点→21.1m・約258㎡（無回帰、引き続き異なる値）。
+- 低い面選択中「自動選択」→ラジオ「敷地全体」でoptimizeFlatRef()実行→21.6m・約1482㎡（448.3坪）。
+  ラジオ「C区画」選択時も個別に21.9m・約371㎡と正しく動作。
+- 高い面選択中、cdeAnchor未指定で「自動選択」→アラートで停止しFLAT_PLANES.low不変を確認（ガード維持）。
+- 低い面/高い面ボタン切替でACTIVE_PLANE・flatRef.elevが連動（21.6m⇔21.1m等）することを確認。
+- 敷地全体チェックボックス表：既定チェック（C区画low/high=true、D/E high=trueのみ）・disabled状態
+  （両面未計算時は全チェックボックスdisabled）を確認。低い面計算後、A区画「下の段」をONにクリック→
+  A=586㎡・合計928㎡へリアルタイム反映、同時に価格シミュレーション「使える面積比」もA=586㎡・
+  C=342㎡・単価再計算まで追従することを確認。
+- XY案トグル後：チェックボックス表がX/Y/D/E行に切替、X区画が主役として既定チェック、価格シミュレーション
+  はABC小計(563㎡)・XY小計(1123㎡)とも非ゼロで正しく表示（上記「指示書との差異」1点目の実証）。
+- 函南（`SITE.subAreaSets`無し）で無回帰確認：`planeToggleWrap`/`highAnchorControls`非表示、
+  `lowRegionRadios`空、結果パネルは従来どおり固定「敷地全体」カード（`areaSelectMatrixHTML`は出ない）。
+  ラジオ空の状態で「自動選択」を押してもアラートにならず敷地全体で正しく最適化（42.3m・374㎡）。
+- コンソールエラー0件（`read_console_messages onlyErrors:true`、全検証を通じて）。構文チェック
+  （`node --check`でinline scriptを抽出評価）もOK。
+
+### 残った知見（オーケストレータへの報告事項）
+- 価格シミュレーションの基準区画は常にA区画だが、`areaSelectState`の既定チェックはC区画（購入検討
+  区画）だけなので、初期状態では「使える面積比の試算」は常に「基準区画(A)の使える面積が0のため
+  試算できません」と表示される（A区画のチェックを手動でONにすれば機能する。クラッシュや誤計算では
+  なくガードが正しく働いている状態）。この初期表示の是非は業務ルールの選択（完全委任の境界⑥寄り）
+  のため、この場では変更せず指示書どおりの既定値を維持した。
