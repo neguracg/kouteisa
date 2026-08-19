@@ -937,3 +937,94 @@ BUGLOG不要」と指定されていたため、この機能追加自体はBUGLO
   （D/E個別調整UI新設）の直接の続き、同じパターンを踏襲。ヨコテン: `pointInSite(`の全呼び出し箇所
   （drawCutFillBadges・drawFlatOutlines・drawCutFillOutlines等）を棚卸し、いずれも敷地全体(ABC)専用の
   バッジ・外郭線描画でありD/E拡張は今回のスコープ外と判断（対象2件のみ・ヨコテン:0件＝同型の他箇所なし）。
+
+## 2026-08-19 平井：購入シナリオ「C+D+E」の2つの基準面（低い面/高い面）を追加（implementerサブエージェントへ委任）
+腱さんの購入作戦が「ABC全部」から「C区画＋隣接筆D・E」に具体化。C+D+Eの範囲に高さの違う2つの平場が
+あることが分かり（オーケストレータがブラウザ実測で確認）、2段構成の家を検討するため「低い面で何㎡・
+高い面で何㎡取れるか」を見る機能を、指示書`docs/task_two_planes.md`（オーケストレータが実測値付きで
+起票、カイシュウ4問は指示書内で回答済み）どおりに実装。
+
+### 実装内容
+1. **購入シナリオの定義**：`SITES.hirai`に`purchaseSets:{'CDE':{label:'C+D+E', abc:['C'], de:['D','E']}}`
+   を追加（区画名の前方一致で解決）。対応する`purchaseSetPolys(setKey)`を`deSubAreaPolys()`の隣に新設
+   （ABC側はshapeToLatLngs+SITE_XFORM、D/E側はdeRegionLatLngsという既存の変換の入口を再利用するだけ・
+   新しい変換は作らない）。
+2. **2つの基準面**：`FLAT_PLANES{low,high}`＋`ACTIVE_PLANE`＋`activatePlane(which)`を新設
+   （flatRefを1点だけ見る既存の描画パイプラインは無変更、「どちらを表示するか」でflatRefを差し替える
+   方式）。物件別にlocalStorage保存（`kouteisa_flatplanes_<site>`）。既存の「📍使える面積…自動選択」
+   ボタン（`optimizeFlatRef()`）は中身を1行も変えず、末尾で結果を`FLAT_PLANES.low`へ格納するだけに
+   拡張（＝低い面を決めるボタンになる）。新設`optimizePlaneForPurchaseSet('CDE')`は、既存の
+   `bestRefForRegion()`がABCのローカル座標(regionPts+SITE_XFORM)前提でD/Eに使えないため、より下位の
+   正本`bestUsableAreaForCells()`（セル集合＋しきい値）を直接使ってFLAT_PLANES.highを求める。
+3. **2面構成の面積集計**：`twoPlaneAreas(latlngs,thM)`を新設。各セルを低い面/高い面のどちらか近い方
+   （両方の範囲に入る場合）に排他的に振り分け、二重計上を防ぐ（合計が実面積を超えない設計）。
+   指示書のコード例にあった`aLow++`/`aHigh++`という意図的な誤りは`aLow+=cellArea`/`aHigh+=cellArea`
+   に修正して実装（格子間隔が1mでない場合に破綻するバグの回避）。`twoPlaneTableHTML()`が表を描画し、
+   `computeFlatAreasCutFill()`内の「隣接筆（D/E）」セクション直後に1行差し込み。
+4. **UI**：既存の自動選択ボタンの直下（同じ`flatComputeBlock`内、クリアボタンの上）に`#planesPanel`
+   （新設ボタン＋低い面/高い面のラジオ切替）を追加。`updatePlanesUI()`が表示/非表示・ラベル
+   （21.6m/未設定等）・ラジオのchecked/disabledを同期。呼び出し箇所：
+   `updateFlatComputeBtnState()`末尾／`optimizeFlatRef()`末尾／`optimizePlaneForPurchaseSet()`末尾／
+   `drawFlat()`末尾／`switchSite()`（`loadFlatPlanes()`の直後）。
+
+### 実装中に見つけて直したバグ（BUGLOG記帳・commit関所フックにより判明）
+指示書は「BUGLOGは今回は新機能なので不要」としていたが（機能全体としては正しい）、実装中に
+指示書のコード例どおり実装すると発生する具体的なバグを1件発見・修正したため、これは
+CLAUDE.md共通ルールの「実装中に自分で見つけて直した分」に該当すると判断し、`docs/BUGLOG.md`へ
+別途1行記帳した（コミット関所フック`buglog-gate.py`もこの分類のコミットを検知しブロックした）。
+`clearFlat()`に指示書どおり`FLAT_PLANES`リセット＋`saveFlatPlanes()`を追加したところ、
+`switchSite()`は`CURRENT_SITE`を新物件へ切替済みの状態で`clearFlat()`を呼ぶため、`saveFlatPlanes()`が
+**新物件の**localStorageを`{low:null,high:null}`で上書きしてしまい、直後の`loadFlatPlanes()`が
+その上書き後の値を読むだけになる＝物件別保存が機能しない（switchSite()で他物件を経由するたびに
+hiraiの保存済み低い面/高い面が消える）ことをブラウザ実機で発見。flatRefが同じ罠を避けるため元々
+`clearFlat()`の外で個別に`loadFlatRef()`している設計にならい、`clearFlat(resetPlanes)`に引数を追加
+（switchSite()の内部呼び出しだけ`clearFlat(false)`でFLAT_PLANESリセットをスキップし、直後の
+`loadFlatPlanes()`に任せる。ボタン直接クリック＝引数なしは従来どおりリセット+保存する）。実機で
+「hirai→hannan→hiraiに戻る」を行い、`kouteisa_flatplanes_hirai`が退避中も破壊されず、戻った時に
+低い面21.6m/高い面23.4mが正しく復元されることを確認して修正が効いていることを実証した。
+
+### 検証（ブラウザ実機、python -m http.server 8934。検証後サーバー停止済み）
+実DOM操作（物件セレクタのchangeイベント・ボタンの`.click()`・ラジオの`.dispatchEvent(new Event('change'))`）
+と、read_page（アクセシビリティツリー）による実際のレンダリング結果の確認を併用（このワーカー環境も
+`computer{action:"screenshot"}`は「Browser paneが非表示」で失敗、過去セッションと同じ制約）。
+- 低い面（既存ボタン、敷地全体）：「自動選択（敷地全体）：基準標高**21.6m**」→ オーケストレータの
+  実測値と一致。
+- 高い面（新ボタン、C+D+E）：「自動選択（C+D+E／高い面）：基準標高**23.4m** → 使える面積(±50cm以内)
+  約**426㎡**が最大」→ オーケストレータの実測値（23.4m/426㎡）と完全一致。
+- 2面構成の表（read_pageで実際のレンダリング結果を確認）：C区画 342（103.6）/213（64.4）/555（168.0）、
+  D区画 24（7.3）/78（23.7）/102（31.0）、E区画 11（3.3）/132（39.8）/142（43.1）、
+  C+D+E合計 377（114.1）/423（127.9）/800（242.0）。各行とも生値で低い面+高い面=合計（丸め表示の
+  一部行で見た目上1違うのは表示桁の丸めによるもの、生値では厳密一致）。各行とも合計がその区画の
+  実面積（C876.69・D410.28・E192.52㎡）を超えないことを確認（二重計上なし）。
+- ラジオでの切替（実DOM changeイベント）：低い面へ切替→`flatRef.elev`21.6・セルのdhが再計算される
+  ことを確認、高い面へ切替→23.4・dhも再計算されることを確認（同一セルで20.7-21.6=-0.9、20.7-23.4=-2.7
+  と符号・値とも一致＝地図の色分けが実際に切り替わることの裏付け）。
+  低い面/高い面どちらか未設定だと該当ラジオが自動でdisabledになることも確認。
+- 低い面・高い面のどちらか未設定時は表の代わりに案内文が出ることを確認（低いのみ/高いのみ/両方未設定
+  の3パターンとも）。
+- 既存ボタンの無回帰：`optimizeFlatRef()`の出力文言・alertガード・flatRef更新処理は1文字も変えておらず、
+  区画セレクタで「A区画」等サブ領域を選んだ場合もFLAT_PLANES.lowだけが更新されhighは無変化であることを
+  確認。
+- 他物件（hannan/camp/furuya/mikokai）：`purchaseSets`が無いため`#planesPanel`は常に非表示、
+  `FLAT_PLANES`は`{low:null,high:null}`のまま無影響であることを確認。ページ再読み込み直後（初期化
+  ブロック）でも同様に非表示で無エラーであることを確認。
+- 位置合わせ系（敷地/公図/D・E個別調整）のパネル・関数のコードには一切触っていない
+  （検証セットアップのため`resetDeRegion('D'/'E')`を**呼び出しのみ**行い、キャッシュ済み標高データと
+  確実に一致する既定位置に戻して検証した。既存の位置調整値との差は過去のWORKLOG記載どおり0.02%程度で
+  実質無視できる差だが、念のためここに記録する）。
+- コンソールエラーなし（`read_console_messages`の`onlyErrors:true`で全工程確認）。構文チェック
+  （`new Function()`でscript全体を評価）もOK。
+- カイシュウ4問は指示書`docs/task_two_planes.md`内で回答済み。機能追加自体はBUGLOG不要（指示書指定
+  どおり）だが、実装中に見つけて直した`clearFlat()`/`switchSite()`の穴は「実装中に自分で見つけて
+  直した分」としてBUGLOGへ1行記帳（docs/BUGLOG.md 2026-08-19）。
+- ヨコテン（BUGLOG記帳分について）：「`switchSite()`がCURRENT_SITEを新物件へ切替済みの状態で内部
+  クリーンアップ関数を呼ぶ」機構を全数棚卸し。`switchSite()`内でCURRENT_SITE再代入後に呼ばれる
+  `updateKouzuToggleUI`/`updateDeExtentUI`/`updateSubAreaToggleUI`/`resetCliffPoints`/`clearBand`は
+  いずれもCURRENT_SITEキーのlocalStorageへ無条件saveする処理を持たず該当なし。近い形の1件を発見：
+  `applyDeSplitPercent(50)`は条件付きで`saveFlatRef()`を呼ぶが、その時点のFLAT_GRIDは切替前の物件の
+  ままのため、新物件の敷地ポリゴンと空間的に重ならない限り発火しない（現状のSITES全5物件は相互に
+  1km以上離れており重ならない）。switchSite()の呼び出し順序自体を変える必要がありこのタスクの
+  対象範囲外（位置合わせ系ではないが`switchSite()`の構造変更は広範囲に影響しうるため）と判断し、
+  修正はせず上記BUGLOG行に記録のみ（ヨコテン:0件＝今回の機能追加で新たに修正すべき箇所はこれ以外
+  無かった、の意）。
+- 指示書`docs/task_two_planes.md`は完了につき削除。

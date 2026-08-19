@@ -266,6 +266,16 @@
         <button id="flatComputeBtn" class="primary" style="width:100%;margin-top:8px" onclick="generateFlat()">平坦度を計算</button>
         <select id="optimizeRegionSel" style="width:100%;margin-top:8px;display:none;padding:3px"></select>
         <button class="small" style="width:100%;margin-top:6px" onclick="optimizeFlatRef()">📍 使える面積(平ら+軽造成)が最大になる基準点を自動選択</button>
+        <div id="planesPanel" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
+          <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:2px">基準面（2面まで）</div>
+          <div class="hint" style="margin:0 0 6px">上のボタンで決めた面が<b>低い面</b>になります。下のボタンで<b>高い面</b>（C+D+E側の高い平場）を決めると、2面構成の表が出ます。地図の色分けは選んだ面のものを表示します。</div>
+          <button class="small" id="planeHighBtn" style="width:100%" onclick="optimizePlaneForPurchaseSet('CDE')">📍 C+D+E で使える面積が最大になる基準点を自動選択（高い面）</button>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:8px;font-size:12px;flex-wrap:wrap">
+            <span class="muted" style="font-size:11px">地図に表示</span>
+            <label style="cursor:pointer"><input type="radio" name="activePlane" value="low" onchange="activatePlane('low')"> 低い面 <span id="planeLowLabel" class="muted"></span></label>
+            <label style="cursor:pointer"><input type="radio" name="activePlane" value="high" onchange="activatePlane('high')"> 高い面 <span id="planeHighLabel" class="muted"></span></label>
+          </div>
+        </div>
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
           <button class="small" onclick="clearFlat()">クリア</button>
           <span id="flatProg" class="muted" style="font-size:11px"></span>
@@ -1061,6 +1071,12 @@ const SITES = {
                 {no:'E区画(1404-4)', pts:DE_E_PTS, key:'E'}
               ],
             }, subAreaDefault:'ABC', twoSided:false,
+            // 購入シナリオ（2026-08-19・腱さんの購入作戦がC区画＋隣接筆D/Eに具体化）＝
+            // 「まとめて評価したい区画の組」。ABC/XYのような敷地の分割案とも、D/E（隣接筆）とも
+            // 別の軸なので独立したキーで持つ。keysは区画名の前方一致で解決する（ABC案のC区画＋DEのD/E）。
+            purchaseSets:{
+              'CDE':{ label:'C+D+E', abc:['C'], de:['D','E'] }
+            },
             // XY案の分割線の向き（A/B境界の実測ベクトル。B/C境界とも実測差0.12°でほぼ同一直線）。
             // splitSiteByPercent()がこの向きに平行な線で任意の%に敷地を切る（_input/Hirai1298/build_split2.py参照）
             splitAxis:{ux:0.7155859614, uy:-0.6985246824},
@@ -1189,6 +1205,23 @@ function deSubAreaPolys(){
   const areas=SITE.subAreaSets && SITE.subAreaSets.DE;
   if(!areas) return [];
   return areas.map(s=>({no:s.no, key:s.key, latlngs:deRegionLatLngs(s.key)}));
+}
+// 購入シナリオkeyから、対象区画の{no,latlngs}配列を返す。ABC側はSITE_XFORM（shapeToLatLngs）、
+// D/E側はdeRegionLatLngs（区画ごとに独立調整）と、既存の変換の入口をそれぞれ再利用する
+// （新しい変換を作らない）。物件がpurchaseSetsを持たない・SITE_XFORM未確定なら空配列。
+function purchaseSetPolys(setKey){
+  const ps=SITE.purchaseSets && SITE.purchaseSets[setKey];
+  if(!ps || !SITE_XFORM) return [];
+  const out=[];
+  (ps.abc||[]).forEach(prefix=>{
+    const r=(SITE.subAreaSets.ABC||[]).find(s=>s.no.startsWith(prefix));
+    if(r) out.push({no:r.no, latlngs:shapeToLatLngs(r.pts, SITE_XFORM)});
+  });
+  (ps.de||[]).forEach(key=>{
+    const r=deSubAreaPolys().find(s=>s.key===key);
+    if(r) out.push({no:r.no, latlngs:r.latlngs});
+  });
+  return out;
 }
 // 区画割案の切替ボタン（物件が複数案を持つ時だけ）。地図・平坦度の表示を選択中の案へ即座に差し替える。
 function toggleSubAreaVariant(){
@@ -1604,7 +1637,7 @@ function switchSite(id){
   updateDeExtentUI();
   updateSubAreaToggleUI();
   clearBand();      // 帯・セル・結果をリセット
-  clearFlat();      // 平坦度グリッド・結果をリセット
+  clearFlat(false); // 平坦度グリッド・結果をリセット（FLAT_PLANESの物件別保存は下のloadFlatPlanes()に任せる）
   // 断面図の選択点(picks)・サンプル(SAMPLES)・確定済み崖線(confirmedCliffs)も物件ごとの状態。
   // clearBand()はこれらを触っておらず、POINTS同様に前物件のデータが残ったまま次の物件に持ち越されて
   // いた（ヨコテン：同じ「switchSite()がリセットし忘れる」機構での別インスタンス。2026-08-17発見）。
@@ -1613,6 +1646,7 @@ function switchSite(id){
   flatRefLayer.clearLayers();
   flatRef=loadFlatRef();   // 新物件の基準点を復元（無ければnull）
   drawFlatRef();
+  loadFlatPlanes(); updatePlanesUI();   // 2つの基準面（低い面/高い面）も物件別に復元
   drawSite();
   map.setView([siteAdj.lat,siteAdj.lon], map.getZoom());
   populateSiteSel();
@@ -2008,6 +2042,31 @@ function recomputeFlatOnly(){
   const okCnt=FLAT_GRID.cells.filter(c=>c.elev!=null).length;
   if(prog) prog.textContent=`基準点変更→再計算済み：${okCnt}/${FLAT_GRID.cells.length} 点（取得済みデータを再利用）`;
 }
+/* ====== 2つの基準面（低い面／高い面。2026-08-19・購入シナリオC+D+E用） ======
+   既存の描画パイプライン（flatRefを1点だけ見る）は変えない。2面ぶんの標高を別に保持し、
+   「今どちらを地図に出すか」でflatRefを差し替える方式（切り替えながら見せる、という要望そのもの）。
+   low=既存の「使える面積…自動選択」ボタンが設定する面、high=C+D+E購入シナリオ用の新設ボタンが設定する面。 */
+let FLAT_PLANES={low:null, high:null};   // それぞれ実在の標高点(lat/lon/elev)。未設定はnull
+let ACTIVE_PLANE='low';   // 地図に表示中の面（'low'|'high'）
+function flatPlanesKey(){ return 'kouteisa_flatplanes_'+CURRENT_SITE; }
+function saveFlatPlanes(){ try{ localStorage.setItem(flatPlanesKey(), JSON.stringify({planes:FLAT_PLANES, active:ACTIVE_PLANE})); }catch(e){} }
+function loadFlatPlanes(){
+  try{
+    const v=JSON.parse(localStorage.getItem(flatPlanesKey()));
+    if(v && v.planes){ FLAT_PLANES=v.planes; ACTIVE_PLANE=v.active||'low'; return; }
+  }catch(e){}
+  FLAT_PLANES={low:null, high:null}; ACTIVE_PLANE='low';
+}
+// 指定の面を地図の基準点(flatRef)に載せて再計算・再描画する（面の切替＝この1関数だけ）
+function activatePlane(which){
+  const p=FLAT_PLANES[which];
+  if(!p) return;
+  ACTIVE_PLANE=which;
+  flatRef={lat:p.lat, lon:p.lon, elev:p.elev, hsrc: flatRef?flatRef.hsrc:null};
+  saveFlatPlanes(); drawFlatRef(); saveFlatRef();
+  recomputeFlatOnly();       // ← 内部でdrawFlat()まで走る
+  updatePlanesUI();
+}
 // 「平ら＋軽い造成で可（=|標高−基準|≦gradeM）」の面積が最大になる基準標高を、与えられたセル集合
 // (FLAT_GRID.cellsの部分集合)だけから探す。原理：各セルの標高eは基準Xが[e-gradeM,e+gradeM]の
 // 範囲にある間だけ「使える」に入る。区間の重なりが最大になるX（区間スタビング）を
@@ -2051,6 +2110,31 @@ function optimizeFlatRef(){
   const prog=document.getElementById('flatProg');
   const tsubo=x=>(x/3.305785).toFixed(1);
   if(prog) prog.textContent=`自動選択（${label}）：基準標高${best.cell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${best.area.toFixed(0)}㎡（${tsubo(best.area)}坪）が最大`;
+  // 2026-08-19：このボタンが決めた面は「低い面」として別枠に保持する（既存の挙動・上のロジックは無変更）。
+  FLAT_PLANES.low={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev};
+  ACTIVE_PLANE='low';
+  saveFlatPlanes();
+  updatePlanesUI();
+}
+// 購入シナリオ（複数ポリゴンの和集合。例：C+D+E）に対して、使える面積が最大になる基準面を探して
+// FLAT_PLANES.highへ設定する。既存のbestRefForRegion()はregionPts（ABCのローカル座標＋SITE_XFORM）
+// 前提でD/Eには使えないため、より下位の正本bestUsableAreaForCells()（セル集合＋しきい値）を直接使う。
+// 「実在の標高点へ丸める」処理はbestRefForRegion()と同じ考え方を踏襲。
+function optimizePlaneForPurchaseSet(setKey){
+  if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  const polys=purchaseSetPolys(setKey);
+  if(!polys.length){ alert('対象区画が見つかりません。'); return; }
+  const usableM=currentUsableM();
+  const cells=FLAT_GRID.cells.filter(c=>c.elev!=null && polys.some(p=>pointInLLPoly(c.lat,c.lon,p.latlngs)));
+  const best=bestUsableAreaForCells(cells, usableM);
+  if(best.elev==null){ alert('対象区画内に有効な標高データがありません。'); return; }
+  let bestCell=null,bestDiff=Infinity;
+  FLAT_GRID.cells.forEach(c=>{ if(c.elev==null) return; const d=Math.abs(c.elev-best.elev); if(d<bestDiff){bestDiff=d;bestCell=c;} });
+  FLAT_PLANES.high={lat:bestCell.lat, lon:bestCell.lon, elev:bestCell.elev};
+  activatePlane('high');   // 内部でflatRef差替え・保存・recomputeFlatOnly()（drawFlat()まで）・updatePlanesUI()まで行う
+  const prog=document.getElementById('flatProg');
+  if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／高い面）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${best.area.toFixed(0)}㎡が最大`;
+  updatePlanesUI();
 }
 
 /* ====== XY分割案：任意%で分割線を平行にずらす（SITE.splitAxisを持つ物件だけ・平井専用機能）
@@ -2350,6 +2434,7 @@ function drawFlat(){
   if(FLAT_SCHEME==='legacy') drawFlatOutlines(areas); else drawCutFillOutlines();
   renderPriceSim();   // 使える面積比の試算は基準点変更のたびに追従
   updateFlatComputeBtnState();
+  updatePlanesUI();
 }
 
 /* 素朴なmarching squares：格子セル4隅の値とレベルの符号からエッジ交点を求めて線分化 */
@@ -2629,6 +2714,51 @@ function cutFillBodyHTML(r){
   const combined=[0,1,2,3].map(i=> r.cut[i]+r.fill[i]);   // 面積表は切土/盛土を合算
   return volLine + cutFillAreaTableHTML(combined);
 }
+// 各セルを「低い面で使える／高い面で使える／どちらでもない」に排他的に振り分ける。
+// 両方の面で使える場合は近い方の面に入れる（二重計上を防ぐ＝合計が実面積を超えない）。
+// 戻り値は㎡（regionAreaScaleで実測図の面積へ正規化。既存のtallyCutFill等と同じ流儀）。
+function twoPlaneAreas(latlngs, thM){
+  if(!FLAT_GRID) return null;
+  const cellArea=FLAT_GRID.g*FLAT_GRID.g;
+  const lo=FLAT_PLANES.low, hi=FLAT_PLANES.high;
+  let inside=0, aLow=0, aHigh=0;
+  FLAT_GRID.cells.forEach(c=>{
+    if(!pointInLLPoly(c.lat,c.lon,latlngs)) return;
+    inside+=cellArea;
+    if(c.elev==null) return;
+    const dLo = lo ? Math.abs(c.elev-lo.elev) : Infinity;
+    const dHi = hi ? Math.abs(c.elev-hi.elev) : Infinity;
+    const okLo = dLo<=thM, okHi = dHi<=thM;
+    if(okLo && okHi){ if(dLo<=dHi) aLow+=cellArea; else aHigh+=cellArea; }
+    else if(okLo) aLow+=cellArea;
+    else if(okHi) aHigh+=cellArea;
+  });
+  const k=regionAreaScale(trueAreaOfLL(latlngs), inside);
+  return {low:aLow*k, high:aHigh*k, total:(aLow+aHigh)*k, area:trueAreaOfLL(latlngs)};
+}
+// 2面構成の表（購入シナリオを持つ物件だけ）。低い面・高い面が両方設定されている時のみ出す。
+function twoPlaneTableHTML(){
+  if(!SITE.purchaseSets || !FLAT_GRID) return '';
+  if(!FLAT_PLANES.low || !FLAT_PLANES.high) {
+    return `<div class="hint" style="margin:8px 0 4px;color:#e0a458">2面構成の表を出すには、上の「低い面」「高い面」の両方を設定してください。</div>`;
+  }
+  const thM=currentUsableM();
+  const f=x=>x.toFixed(0), t=x=>tsuboOf(x).toFixed(1);
+  let html=`<div style="margin:10px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">2面構成で使える面積（±${Math.round(thM*100)}cm以内・面ごとに排他集計）</div>`;
+  html+=`<table class="ftab"><tr><th>区画</th><th>低い面 ${FLAT_PLANES.low.elev.toFixed(1)}m<br>㎡（坪）</th><th>高い面 ${FLAT_PLANES.high.elev.toFixed(1)}m<br>㎡（坪）</th><th>合計<br>㎡（坪）</th></tr>`;
+  Object.keys(SITE.purchaseSets).forEach(setKey=>{
+    const polys=purchaseSetPolys(setKey);
+    let sLow=0,sHigh=0;
+    polys.forEach(p=>{
+      const r=twoPlaneAreas(p.latlngs, thM);
+      sLow+=r.low; sHigh+=r.high;
+      html+=`<tr><td class="l">${p.no.split(/\s+/)[0]}</td><td>${f(r.low)}（${t(r.low)}）</td><td>${f(r.high)}（${t(r.high)}）</td><td>${f(r.low+r.high)}（${t(r.low+r.high)}）</td></tr>`;
+    });
+    html+=`<tr style="border-top:2px solid #3b82f6;background:#132436;font-weight:700;color:#e6edf3"><td class="l">${SITE.purchaseSets[setKey].label} 合計</td><td>${f(sLow)}（${t(sLow)}）</td><td>${f(sHigh)}（${t(sHigh)}）</td><td>${f(sLow+sHigh)}（${t(sLow+sHigh)}）</td></tr>`;
+  });
+  html+=`</table><div class="hint" style="margin-top:2px">同じ場所が両方の面で使える場合は<b>近い方の面だけ</b>に計上します（二重計上なし＝合計は実面積を超えません）。</div>`;
+  return html;
+}
 function computeFlatAreasCutFill(el){
   const all=tallyCutFill(pointInSite, siteTrueAreaM2());
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`
@@ -2645,6 +2775,7 @@ function computeFlatAreasCutFill(el){
     html+=`<div style="margin:8px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">隣接筆（D/E）</div>`+deAccuracyHintHTML();
     des.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
   }
+  html+=twoPlaneTableHTML();   // 2面構成（低い面/高い面）の表。購入シナリオを持つ物件だけ中身が出る
   html+=`<div style="margin-top:6px">`+
     `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
     `<span class="src">土量は基準面との標高差×格子面積の単純合計による概算です。法面形状・締固め・場外搬出入は考慮していません。切土/盛土量の差引は良否判定に使わず、規模の目安としてご確認ください。`
@@ -2793,12 +2924,19 @@ function drawCutFillOutlines(){
   drawGroup(maskAt(0.50), {style:{color:'#0d7a37', weight:4, opacity:1, fill:false, interactive:true}, tooltip:'50cm境界（土工まで＝現実的に使える範囲の目安・最重要）'});
 }
 
-function clearFlat(){
+// resetPlanes=false（switchSite()専用）：switchSite()はCURRENT_SITEを新物件へ切替済みの状態で
+// clearFlat()を呼ぶため、ここで無条件にsaveFlatPlanes()すると新物件のlocalStorageを
+// {low:null,high:null}で上書きしてしまい、直後のloadFlatPlanes()がその上書き後の値を読むだけになる
+// ＝物件別保存(FLAT_PLANES)が機能しなくなる（flatRefが同じ罠を避けるため元々clearFlat()の外で
+// 個別にloadFlatRef()している設計と同じ理由。実装中に気づいて修正）。switchSite()側は
+// この下のloadFlatPlanes()に任せるのでfalseを渡す。ボタン直接クリック（引数無し）は従来どおりtrue扱い。
+function clearFlat(resetPlanes){
   flatLayer.clearLayers();
   FLAT_GRID=null;
   FLAT_GRID_SIG=null;
   const el=document.getElementById('flatResult'); if(el){el.style.display='none';el.innerHTML='';}
   const prog=document.getElementById('flatProg'); if(prog) prog.textContent='';
+  if(resetPlanes!==false){ FLAT_PLANES={low:null,high:null}; ACTIVE_PLANE='low'; saveFlatPlanes(); updatePlanesUI(); }
   updateFlatComputeBtnState();
 }
 // 「平坦度を計算」ボタンの活性/グレーアウト。今の設定(#fGrid等)で取得済みの格子がそのまま使える時は
@@ -2813,6 +2951,23 @@ function updateFlatComputeBtnState(){
   btn.style.opacity = ready ? '0.4' : '1';
   btn.style.cursor = ready ? 'default' : 'pointer';
   btn.textContent = ready ? '平坦度を計算　（取得済み・基準点の変更は自動反映されます）' : '平坦度を計算';
+  updatePlanesUI();
+}
+// 基準面パネル（低い面／高い面）の表示を、現在のFLAT_PLANES/ACTIVE_PLANEに同期する。
+// SITE.purchaseSetsを持つ物件（現状は平井のみ）だけ表示、それ以外は物件切替のたびに自動で隠れる。
+function updatePlanesUI(){
+  const panel=document.getElementById('planesPanel');
+  if(!panel) return;
+  const has=!!SITE.purchaseSets;
+  panel.style.display = has ? 'block' : 'none';
+  if(!has) return;
+  const lowLbl=document.getElementById('planeLowLabel'), highLbl=document.getElementById('planeHighLabel');
+  if(lowLbl) lowLbl.textContent = FLAT_PLANES.low ? `（${FLAT_PLANES.low.elev.toFixed(1)}m）` : '（未設定）';
+  if(highLbl) highLbl.textContent = FLAT_PLANES.high ? `（${FLAT_PLANES.high.elev.toFixed(1)}m）` : '（未設定）';
+  document.querySelectorAll('input[name="activePlane"]').forEach(r=>{
+    r.checked = (r.value===ACTIVE_PLANE);
+    r.disabled = !FLAT_PLANES[r.value];
+  });
 }
 ['fFlatCm','fGradeCm','fSteepCm','fContour'].forEach(id=>{
   const elx=document.getElementById(id);
@@ -3501,6 +3656,7 @@ updateKouzuToggleUI();
 updateFlatSchemeUI();
 flatRef=loadFlatRef();
 drawFlatRef();
+loadFlatPlanes(); updatePlanesUI();   // 2つの基準面（低い面/高い面）：switchSite()と同じ初期化をここでも行う
 setTool(TOOL);
 ['top','bottom'].forEach(k=>setPoint(k,POINTS[k].lat,POINTS[k].lon,false));
 if(!VIEW){ fetchElev('top'); fetchElev('bottom'); }
