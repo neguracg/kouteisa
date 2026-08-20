@@ -425,7 +425,14 @@
               <button class="small" onclick="scaleDeRegion('D',1.01)">+1%</button>
               <button class="small" onclick="scaleDeRegion('D',1.05)">+5%</button>
             </div>
-            <div class="hint" style="margin-top:6px">地図上の<b>D区画</b>をドラッグで移動。</div>
+            <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:4px">
+              <span class="muted" style="font-size:11px">軸縮尺</span>
+              <button class="small" onclick="axisScaleDeRegion('D',1/1.05)">−5%</button>
+              <button class="small" onclick="axisScaleDeRegion('D',1/1.01)">−1%</button>
+              <button class="small" onclick="axisScaleDeRegion('D',1.01)">+1%</button>
+              <button class="small" onclick="axisScaleDeRegion('D',1.05)">+5%</button>
+            </div>
+            <div class="hint" style="margin-top:6px">地図上の<b>D区画</b>をドラッグで移動。<br>軸縮尺＝C/D境界の方向（北西→南東）に沿ってだけ伸縮します。公図と比べて一方向だけ長すぎる/短すぎる時に使ってください。</div>
           </div>
           <div class="note" id="deArea_D" style="margin-top:6px"></div>
           <div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px">
@@ -451,7 +458,14 @@
               <button class="small" onclick="scaleDeRegion('E',1.01)">+1%</button>
               <button class="small" onclick="scaleDeRegion('E',1.05)">+5%</button>
             </div>
-            <div class="hint" style="margin-top:6px">地図上の<b>E区画</b>をドラッグで移動。</div>
+            <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:4px">
+              <span class="muted" style="font-size:11px">軸縮尺</span>
+              <button class="small" onclick="axisScaleDeRegion('E',1/1.05)">−5%</button>
+              <button class="small" onclick="axisScaleDeRegion('E',1/1.01)">−1%</button>
+              <button class="small" onclick="axisScaleDeRegion('E',1.01)">+1%</button>
+              <button class="small" onclick="axisScaleDeRegion('E',1.05)">+5%</button>
+            </div>
+            <div class="hint" style="margin-top:6px">地図上の<b>E区画</b>をドラッグで移動。<br>軸縮尺＝C/D境界の方向（北西→南東）に沿ってだけ伸縮します。公図と比べて一方向だけ長すぎる/短すぎる時に使ってください。</div>
           </div>
           <div class="note" id="deArea_E" style="margin-top:6px"></div>
           <div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px">
@@ -1046,6 +1060,15 @@ function deRegionLocalCentroid(pts){
   const cy=pts.reduce((s,p)=>s+p[1],0)/pts.length;
   return {cx,cy};
 }
+// D/E軸縮尺(axk・2026-08-20)の圧縮軸。Dの「半島」が公図と比べC/D境界の軸方向にだけ長すぎると判明したため
+// 追加。方向はC/D境界（ABC北東辺）の向きで固定＝ABC頂点列の北端(-3.78,28.6)→東端(27.24,-1.68)の
+// 差分を正規化した値（オーケストレータが公図ピンク画像との合成比較で診断・算出。docs/task_20260820_de_axis_scale.md）。
+// SITE.splitAxis(A/B・B/C境界の実測方向)とほぼ同一直線だが由来が別の値なので独立した定数として持つ
+// （splitAxisはXY分割線専用の別概念。混ぜて依存させない）。Math.hypotで実行時に単位化（3桁丸め値のため）。
+const _DE_AXIS_RAW = {x:0.715, y:-0.699};
+const _DE_AXIS_LEN = Math.hypot(_DE_AXIS_RAW.x, _DE_AXIS_RAW.y);
+const DE_AXIS_U = {x:_DE_AXIS_RAW.x/_DE_AXIS_LEN, y:_DE_AXIS_RAW.y/_DE_AXIS_LEN};
+const DE_AXIS_V = {x:-DE_AXIS_U.y, y:DE_AXIS_U.x};   // uに直交（90°回転）
 const SITES = {
   hannan: { id:'hannan', name:'函南 物件（区画図トレース）', anchor:{lat:35.0931148,lon:138.9555981}, targetArea:526, rect:false,
             // 区画図(全体区画図.png)の緑部分をトレースした形状（x=東, y=北 の相対px）
@@ -1211,27 +1234,43 @@ function deRegionAdjKey(region){ return 'kouteisa_de_'+region+'_adjust_'+CURRENT
 function defaultDeRegionAdj(region){
   const {cx,cy}=deRegionLocalCentroid(DE_REGIONS[region]);
   const ll=shapeToLatLngs([[cx,cy]], SITE_XFORM)[0];
-  return {lat:ll.lat, lon:ll.lon, rot:0, scale:1};
+  return {lat:ll.lat, lon:ll.lon, rot:0, scale:1, axk:1};
 }
 function loadDeRegionAdj(region){
   try{
     const v=JSON.parse(localStorage.getItem(deRegionAdjKey(region)));
-    if(v && typeof v.lat==='number' && typeof v.lon==='number') return v;
+    if(v && typeof v.lat==='number' && typeof v.lon==='number'){
+      if(typeof v.axk!=='number') v.axk=1;   // 旧保存データ（axk追加=2026-08-20より前）の後方互換
+      return v;
+    }
   }catch(e){}
   return defaultDeRegionAdj(region);
 }
 function saveDeRegionAdj(region){ try{ localStorage.setItem(deRegionAdjKey(region), JSON.stringify(deRegionAdj[region])); }catch(e){} }
-let deRegionAdj = { D:{lat:0,lon:0,rot:0,scale:1}, E:{lat:0,lon:0,rot:0,scale:1} };  // 起動時プレースホルダ（updateDeExtentUI()がSITE_XFORM確定後に必ず上書きする）
+let deRegionAdj = { D:{lat:0,lon:0,rot:0,scale:1,axk:1}, E:{lat:0,lon:0,rot:0,scale:1,axk:1} };  // 起動時プレースホルダ（updateDeExtentUI()がSITE_XFORM確定後に必ず上書きする）
 let deAdjustMode = { D:false, E:false };
 // pts(ローカルm座標)をregionの現在のdeRegionAdjで緯度経度化する。buildSite()と違い面積正規化
 // (s=sqrt(targetArea/a0))は行わない＝kouzuAdjと同じ「素の相似変換」。
+// 2026-08-20：軸縮尺(axk)を回転・倍率の「前」に適用する（軸は形状自身の固有方向＝DE_AXIS_U/Vなので、
+// 後から回転しても軸が形状に追随するように）。axk===1の時は分岐で素通しし、旧来と完全に同一の
+// 計算経路（同じ浮動小数演算列）を通す＝後方互換の担保。
 function deRegionLatLngs(region){
   const pts=DE_REGIONS[region], adj=deRegionAdj[region];
   const {cx,cy}=deRegionLocalCentroid(pts);
+  const axk=(typeof adj.axk==='number')?adj.axk:1;
   const mLat=111320, mLon=111320*Math.cos(rad(adj.lat));
   const r=rad(adj.rot), cr=Math.cos(r), sr=Math.sin(r);
   return pts.map(p=>{
-    const x=(p[0]-cx)*adj.scale, y=(p[1]-cy)*adj.scale;
+    let px=p[0], py=p[1];
+    if(axk!==1){
+      // 重心固定で軸方向(DE_AXIS_U)にだけaxk倍・直交方向(DE_AXIS_V)は不変（ドラッグ位置の感覚を壊さない）
+      const dx=px-cx, dy=py-cy;
+      const du=(dx*DE_AXIS_U.x+dy*DE_AXIS_U.y)*axk;
+      const dv=dx*DE_AXIS_V.x+dy*DE_AXIS_V.y;
+      px=cx+du*DE_AXIS_U.x+dv*DE_AXIS_V.x;
+      py=cy+du*DE_AXIS_U.y+dv*DE_AXIS_V.y;
+    }
+    const x=(px-cx)*adj.scale, y=(py-cy)*adj.scale;
     const xr=x*cr-y*sr, yr=x*sr+y*cr;
     return {lat: adj.lat+yr/mLat, lon: adj.lon+xr/mLon};
   });
@@ -1665,7 +1704,7 @@ function updateDeExtentUI(){
   const polys=deSubAreaPolys();
   polys.forEach(s=>{
     const el=document.getElementById('deArea_'+s.key);
-    if(el) el.textContent = `${s.no}　約${trueAreaOfLL(s.latlngs).toFixed(0)}㎡　（倍率${deRegionAdj[s.key].scale.toFixed(2)}・角度${Math.round(deRegionAdj[s.key].rot)}°）`;
+    if(el) el.textContent = `${s.no}　約${trueAreaOfLL(s.latlngs).toFixed(0)}㎡　（倍率${deRegionAdj[s.key].scale.toFixed(2)}・角度${Math.round(deRegionAdj[s.key].rot)}°・軸${deRegionAdj[s.key].axk.toFixed(2)}）`;
   });
   drawSubAreaDE();
   renderPriceSim();
@@ -1772,6 +1811,15 @@ function toggleDeAdjust(region){
 // 変わらないのでupdateDeExtentUI()は呼ばない（既存のsiteAdjのドラッグ処理も同じ扱い）。
 function rotateDeRegion(region,d){ deRegionAdj[region].rot=(deRegionAdj[region].rot+d); saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI(); }
 function scaleDeRegion(region,f){ deRegionAdj[region].scale=Math.max(0.1,Math.min(10, deRegionAdj[region].scale*f)); saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI(); }
+// 軸縮尺（2026-08-20）：DE_AXIS_U方向（C/D境界の向き・固定）にだけ伸縮する。scaleDeRegionと同じ後処理。
+// クランプ幅0.3〜2.0はscaleDeRegionの0.1〜10より狭い＝軸圧縮は公図に合わせる微調整用途（想定0.75〜0.85
+// 付近）であり、それを大きく外れる値には意味が無いため。
+function axisScaleDeRegion(region,f){
+  const adj=deRegionAdj[region];
+  const cur=(typeof adj.axk==='number')?adj.axk:1;
+  adj.axk=Math.max(0.3,Math.min(2.0, cur*f));
+  saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI();
+}
 function resetDeRegion(region){
   deRegionAdj[region]=defaultDeRegionAdj(region);
   saveDeRegionAdj(region); drawSubAreaDE(); redrawDeHandles(); updateDeExtentUI();
