@@ -1557,9 +1557,15 @@ function renderPriceSim(){
     const baseRef=bestRefForRegion(base.pts, thM);
     const baseUsable=baseRef ? baseRef.area : 0;
     const unit2=baseUsable>0 ? effPrice/baseUsable : 0;
+    // 2026-08-20（オーケストレータ実機確認で発見）：基準区画(A)自身の行は、単価の分母には上の
+    // baseUsable（A専用の最良値・チェック状態に非依存）を使うのに、行の表示値だけは他区画と同じ
+    // regionUsableAreaSelected()（areaSelectStateのチェック依存）を通していたため、Aが既定で
+    // 非チェックの物件では「A区画 (基準) 0 0.0 0.0」と表示され、直上の「実効価格1298.0万円」の
+    // 注記と矛盾して見えた（単価の計算自体は正しく、表示だけが食い違っていた）。基準区画の行は
+    // 常にbaseUsable/effPriceをそのまま出す（チェック状態を無視する、という既存方針の徹底）。
     const rows2=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName,
       g.label==='DE' ? (r=>regionUsableAreaSelected(r.key, deRegionLatLngs(r.key), thM)||0)
-                     : (r=>regionUsableAreaSelected(r.no.split(/\s+/)[0], shapeToLatLngs(r.pts,SITE_XFORM), thM)||0),
+                     : (r=>r.no.split(/\s+/)[0]===baseName ? baseUsable : (regionUsableAreaSelected(r.no.split(/\s+/)[0], shapeToLatLngs(r.pts,SITE_XFORM), thM)||0)),
       unit2, f, t, y)).join('');
     html+=`<div style="font-weight:700;color:#e6edf3;margin:8px 0 2px">使える面積比(±${(thM*100).toFixed(0)}cm)の試算</div>`
       + `<table class="ftab">${baseUsable>0?'':'<caption style="color:#e07a4a">基準区画(A)の使える面積が0のため試算できません</caption>'}<tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
