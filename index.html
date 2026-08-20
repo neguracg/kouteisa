@@ -1526,11 +1526,18 @@ function renderPriceSim(){
     // priceSimUsableAreaDE()は廃止（usableAreaOfLL()の定義箇所参照）。
     // ただし基準区画(A)は「実売価格が分かっている参照点」であって「購入予定の区画セット」ではないため、
     // 敷地全体チェックボックスの選択状態（既定でA区画は非チェック）に左右されると試算が常に0になり
-    // 壊れる。基準区画の使える面積だけはチェック状態を無視し、低い面（従来からの唯一の面）で
-    // 常に計算する（実装中に発見・オーケストレータ判断で確定：既定チェックはCDE寄りのまま変えず、
-    // 基準区画側の計算を独立させることで解決）。
-    const baseLL=shapeToLatLngs(base.pts,SITE_XFORM);
-    const baseUsable=FLAT_PLANES.low ? usableAreaAtElev(baseLL, FLAT_PLANES.low.elev, thM) : 0;
+    // 壊れる。基準区画の使える面積だけはチェック状態を無視して計算する。
+    // 2026-08-20（項目1・腱さん実機報告で発覚）：上記を「低い面（FLAT_PLANES.lowの現在値）で常に計算」と
+    // 実装していたのが別のバグだった。FLAT_PLANES.lowはその時たまたま「低い面」ボタン経由でどの区画向けに
+    // 最適化されたか任意（ABC全体最大化かもしれないしC単独最大化かもしれない）で、その標高がA区画にとって
+    // 最適とは限らない。Aの使える面積が過小評価されると単価(unit2=effPrice/baseUsable)が異常高騰し、
+    // 全区画（特にC）の「使える面積比」試算価格が「面積比」試算価格より高くなる＝「使える面積は生面積の
+    // 部分集合だから普通は面積比より安くなる」という前提が崩れる形で症状が出ていた。
+    // bestRefForRegion(base.pts, thM)でA区画専用の最良使える面積を都度計算する＝FLAT_PLANES.lowの
+    // 現在値に依存させない（Aは「実売価格の分かっている参照点」であり購入予定の区画セットの一部ではない、
+    // という既存方針をチェックボックス依存だけでなくFLAT_PLANES.low依存からも独立させる）。
+    const baseRef=bestRefForRegion(base.pts, thM);
+    const baseUsable=baseRef ? baseRef.area : 0;
     const unit2=baseUsable>0 ? effPrice/baseUsable : 0;
     const rows2=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName,
       g.label==='DE' ? (r=>regionUsableAreaSelected(r.key, deRegionLatLngs(r.key), thM)||0)
