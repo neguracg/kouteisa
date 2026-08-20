@@ -4025,12 +4025,22 @@ function siteDistOnLine(){
   const sx=(cLon-A.lon)*mLon, sy=(cLat-A.lat)*mLat;
   return A.dist + (sx*ux+sy*uy);
 }
-// 崖下端から「敷地（要対策）方向」の符号（+1:dist増加側/-1:減少側）
+// 崖下端から「崖と反対側（平地側）」への符号（+1:dist増加側/-1:減少側）
+// 2026-08-21（項目3）：向きは崖自身の形状（稜線crest→下端footの向きの延長）だけから決める。
+// 旧実装は敷地位置(siteDistOnLine、断面図が描く1本の線に敷地重心を投影した位置)を主に使っており、
+// 項目1(generateBand)の断面(strip)ごとの符号反転バグと同じ「向きを崖自身の形状ではなく外部の
+// 基準点との相対位置で決める」機構だった。実機再現：平井で崖上端dist=93・崖下端dist=105・
+// 敷地投影位置=67.39の断面を手動選択すると、旧式は敷地投影位置基準でsign=-1（崖の方へ戻る誤方向）を
+// 返し、2H到達点が崖上端の位置(35.09360付近)にほぼ重なっていた（詳細はBUGLOG参照）。
+// foot.dist===crest.distになるのは測線軸上で同じ位置＝崖として成立しない縮退ケースのみで、
+// そこだけ敷地位置へフォールバックする（項目1の修正式と同じ優先順位）。
 function twoHSign(foot,crest){
-  const sd=siteDistOnLine();
-  let s = (sd!=null)?Math.sign(sd-foot.dist):0;
-  if(!s) s = Math.sign(foot.dist-crest.dist)||1;   // 敷地情報なし時は崖上端と反対（下側）
-  return s;
+  let s = Math.sign(foot.dist-crest.dist);
+  if(!s){
+    const sd=siteDistOnLine();
+    s = (sd!=null)?Math.sign(sd-foot.dist):0;
+  }
+  return s||1;
 }
 // 地図上：崖下端から敷地（要対策）側への地理方位（崖軸に沿い、敷地のある側へ）
 function twoHDir(c){
