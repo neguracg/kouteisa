@@ -2278,15 +2278,24 @@ async function moveFlatRef(lat, lon){
   drawFlatRef();
   saveFlatRef();
   if(v==null){ if(prog) prog.textContent='基準点の標高取得に失敗しました。再クリックしてください。'; return; }
+  // 2026-08-20（腱さん報告で発覚）：flatRefとFLAT_PLANESの同期が activatePlane() の一方向
+  // （FLAT_PLANES→flatRef）だけで、地図クリック/ドラッグでflatRefを動かしてもFLAT_PLANES側へ
+  // 書き戻していなかった。そのため「上の段を選んだ状態で地図をクリックしても上の段が変わらない」
+  // （地図の色分けはflatRefを見るので変わるが、面積一覧表・価格シミュ・CSV出力・段ボタンの標高表示は
+  // すべてFLAT_PLANESを見るため古いまま）という食い違いが起きていた。基準点の移動は「今選んでいる段を
+  // その位置で定義し直す」操作なので、ここでACTIVE_PLANE側へ書き戻して両者を常に一致させる。
+  FLAT_PLANES[ACTIVE_PLANE]={lat:flatRef.lat, lon:flatRef.lon, elev:flatRef.elev};
+  saveFlatPlanes();
   if(FLAT_GRID){ recomputeFlatOnly(); }        // 格子は取得済み→再計算のみ（速い）
   else if(prog){ prog.textContent=''; }        // 格子未取得→「平坦度を計算」待ち
+  updatePlanesUI();   // 段ボタンの標高表示・面積一覧表・価格シミュを新しい基準標高へ追随させる
 }
 function setFlatRef(latlng){ return moveFlatRef(latlng.lat, latlng.lng); }
 function drawFlatRef(){
   flatRefLayer.clearLayers();
   if(!flatRef) return;
   makeDot(flatRefLayer,[flatRef.lat,flatRef.lon],'#ffd166',true, ll=> moveFlatRef(ll.lat, ll.lng));
-  const txt='基準（道路）標高 '+(flatRef.elev!=null ? flatRef.elev.toFixed(1)+'m' : '取得中…');
+  const txt='基準標高 '+(flatRef.elev!=null ? flatRef.elev.toFixed(1)+'m' : '取得中…');
   makeLabel(flatRefLayer, L.latLng(flatRef.lat,flatRef.lon), txt, '#ffd166', true);
 }
 /* ====== 「高い面」目印点（cdeAnchor）：moveFlatRef()/drawFlatRef()と同じ「クリック→標高取得→
