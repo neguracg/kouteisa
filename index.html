@@ -2047,10 +2047,14 @@ async function generateBand(){
       if((det.status==='ok'||det.status==='short')&&det.baseK!=null){
         const base=samples[det.P[det.baseK].si], crest=samples[det.P[det.qK].si];
         const H=crest.elev-base.elev;
-        // 2Hは崖下端から「敷地（重心）方向」へ水平。toENは敷地重心が原点なので、崖下端の軸方向位置の符号で判定
+        // 2026-08-21 修正：2Hは崖下端から「崖と反対側（平地側）」へ水平＝稜線(crest)→下端(foot)の
+        // 向きの延長で決まる、崖自身の形状だけの量。旧実装は「敷地重心との位置関係」(footAの符号)を
+        // 主に使っており、断面(strip)ごとにfootAの符号が反転しうるため帯が自己交差(蝶ネクタイ化)する
+        // バグだった（実機再現・詳細はdocs/BUGLOG.md参照）。footA-crestAが0になるのはcrestとfootが
+        // 測線軸上で同じ位置＝崖として成立しない縮退ケースのみで、そこだけ旧式へフォールバックする。
         const bEN=toEN(base), cEN=toEN(crest);
         const footA=bEN.e*De+bEN.n*Dn, crestA=cEN.e*De+cEN.n*Dn;
-        let sgn=-Math.sign(footA); if(!sgn) sgn=Math.sign(footA-crestA)||1;  // 敷地重心側（崖下端→敷地）
+        let sgn=Math.sign(footA-crestA) || -Math.sign(footA) || 1;   // 稜線→下端の向きの延長＝崖と反対側（平地側）
         const uE=sgn*De, uN=sgn*Dn;
         const reach=toLL(bEN.e+uE*mul*H, bEN.n+uN*mul*H);
         Object.assign(rec,{base:{lat:base.lat,lon:base.lon},baseEN:bEN,up:{e:uE,n:uN},twoH:mul*H,reach});
