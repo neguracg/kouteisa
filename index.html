@@ -303,38 +303,51 @@
           <span id="flatProg" class="muted" style="font-size:11px"></span>
         </div>
       </div>
-      <div id="subAreaSelectBlock" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
-        <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:6px">区画割案の選択</div>
-        <div id="subAreaToggleWrap" style="display:flex;gap:6px"></div>
-      </div>
-      <div id="deSplitPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px;transition:opacity .15s">
-        <div style="font-weight:700;color:#e6edf3;margin-bottom:4px">X/Y 敷地分割</div>
-        <div class="hint" style="margin:0 0 6px">X/Y分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）。<b>X区画</b>が主役：ラインを動かすたびに、その時のX区画だけで「使える面積」が最大になる基準点を自動で探して反映します。</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <label style="font-size:12px;white-space:nowrap"><b>X区画</b>の割合<input id="deSplitPct" type="text" inputmode="decimal" value="50" style="width:50px;margin-left:4px"></label>%
-          <input id="deSplitSlider" type="range" min="1" max="99" value="50" step="0.5" style="flex:1">
+      <!-- 区画割案ブロック（2026-08-20再編・項目4）：旧flatComputeBlock内に埋もれていた「区画割案の選択」
+           （ABC/XYトグル）と「X/Y敷地分割」（%調整）を、意味のある固まりとして独立させた。
+           SITE.purchaseSetsが無い物件では非表示（updateSubAreaToggleUI()参照。既存のdisplay:none制御を維持）。 -->
+      <div id="regionPlanBlock" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
+        <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:6px">区画割案</div>
+        <div id="subAreaSelectBlock" style="display:none">
+          <div style="font-weight:700;color:#9fb0c0;font-size:12px;margin-bottom:4px">区画割案の選択</div>
+          <div id="subAreaToggleWrap" style="display:flex;gap:6px"></div>
         </div>
-        <div id="deSplitAreaInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-        <div style="display:grid;grid-template-columns:auto 58px 44px auto;gap:6px 6px;align-items:center;margin-top:8px;font-size:12px">
-          <span>X区画 目標面積</span>
-          <input id="deTargetArea" type="text" inputmode="decimal" placeholder="例 150">
-          <select id="deTargetAreaUnit">
-            <option value="tsubo" selected>坪</option>
-            <option value="m2">㎡</option>
-          </select>
-          <button class="small" onclick="applyDeTargetArea()" title="この面積になる%へ反映">反映</button>
-          <span>使える面積</span>
-          <input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150">
-          <select id="deTargetUsableUnit">
-            <option value="tsubo" selected>坪</option>
-            <option value="m2">㎡</option>
-          </select>
-          <button class="small" onclick="applyDeTargetUsable()" title="この使える面積になる%へ反映">反映</button>
+        <div id="deSplitPanel" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #2a3542;transition:opacity .15s">
+          <div style="font-weight:700;color:#9fb0c0;font-size:12px;margin-bottom:4px">X/Y 敷地分割</div>
+          <div class="hint" style="margin:0 0 6px">X/Y分割ライン（既存の区画線と同じ向きのまま、位置だけ自由にずらせます）。<b>X区画</b>が主役：ラインを動かすたびに、その時のX区画だけで「使える面積」が最大になる基準点を自動で探して反映します。</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label style="font-size:12px;white-space:nowrap"><b>X区画</b>の割合<input id="deSplitPct" type="text" inputmode="decimal" value="50" style="width:50px;margin-left:4px"></label>%
+            <input id="deSplitSlider" type="range" min="1" max="99" value="50" step="0.5" style="flex:1">
+          </div>
+          <div id="deSplitAreaInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+          <div style="display:grid;grid-template-columns:auto 58px 44px auto;gap:6px 6px;align-items:center;margin-top:8px;font-size:12px">
+            <span>X区画 目標面積</span>
+            <input id="deTargetArea" type="text" inputmode="decimal" placeholder="例 150">
+            <select id="deTargetAreaUnit">
+              <option value="tsubo" selected>坪</option>
+              <option value="m2">㎡</option>
+            </select>
+            <button class="small" onclick="applyDeTargetArea()" title="この面積になる%へ反映">反映</button>
+            <span>使える面積</span>
+            <input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150">
+            <select id="deTargetUsableUnit">
+              <option value="tsubo" selected>坪</option>
+              <option value="m2">㎡</option>
+            </select>
+            <button class="small" onclick="applyDeTargetUsable()" title="この使える面積になる%へ反映">反映</button>
+          </div>
         </div>
       </div>
-      <div class="note" id="flatResult" style="margin-top:8px;display:none"></div>
-      <div id="priceSimPanel" style="display:none;margin-top:6px;padding:8px;background:#0f1720;border-radius:8px">
-        <div style="font-weight:700;color:#e6edf3;margin-bottom:6px">価格シミュレーション</div>
+      <!-- 面積一覧表ブロック（2026-08-20再編・項目4）。中身(#flatResult)はcomputeFlatAreas()が丸ごと
+           書き出す＝パラメータ設定(チェックボックス)→区画別の内訳→敷地全体、の順で1つのHTMLにする
+           （computeFlatAreasCutFill()参照）。未計算時はタイトルだけ見えて中身は空（他ブロックと同じ
+           「見出しは常設・中身は計算後に出る」という既存の見せ方を踏襲）。 -->
+      <div id="areaListBlock" style="margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
+        <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:6px">面積一覧表</div>
+        <div class="note" id="flatResult" style="display:none"></div>
+      </div>
+      <div id="priceSimPanel" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
+        <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:6px">価格シミュレーション</div>
         <div class="hint" style="margin:0 0 6px"><b>A区画</b>だけが分かっている価格を基準に、他区画（B/C、XY表示中はX/Yも、常にD/Eも）を<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく単純な比例配分の目安。DE=1170-1/1404-4はABC敷地とは別の隣接地のため、小計はABC小計とは一致しません）。この価格を値引きすると全区画の試算額が連動して変わります。</div>
         <div style="display:grid;grid-template-columns:auto 70px auto;gap:6px 6px;align-items:center;font-size:12px">
           <span>A区画 現在価格</span><input id="priceSimBase" type="text" inputmode="decimal" value="1298" oninput="priceSimBaseChanged()">万円
@@ -1259,17 +1272,22 @@ function selectSubAreaVariant(key){
   if(FLAT_GRID) drawFlat();
 }
 function updateSubAreaToggleUI(){
+  // 2026-08-20（項目4）：subAreaSelectBlock/deSplitPanelを「区画割案」ブロック(regionPlanBlock)へ
+  // まとめたため、外枠の表示/非表示も一緒に切り替える（既存のblock/panel個別のdisplay制御はそのまま維持）。
+  const wrapBlock=document.getElementById('regionPlanBlock');
   const block=document.getElementById('subAreaSelectBlock');
   const wrap=document.getElementById('subAreaToggleWrap');
   const panel=document.getElementById('deSplitPanel');
   const priceSim=document.getElementById('priceSimPanel');
   populateLowRegionRadios();   // 区画割の有無に関わらず毎回、選択肢を今の状態に合わせて作り直す
   if(!hasSubAreaVariants()){
+    if(wrapBlock) wrapBlock.style.display='none';
     if(block) block.style.display='none';
     if(panel) panel.style.display='none';
     if(priceSim) priceSim.style.display='none';
     return;
   }
+  if(wrapBlock) wrapBlock.style.display='block';
   if(block) block.style.display='block';
   const keys=subAreaVariantKeys();   // ABC⇄XYの2択のみ（DEは常設・トグル対象外）
   if(wrap){
@@ -3030,24 +3048,48 @@ function tallyRegionSelected(key, ll, trueArea){
   if(st.high && FLAT_PLANES.high) add(tallyCutFillAtElev(inTest, trueArea, FLAT_PLANES.high.elev));
   return acc;
 }
+// 「敷地全体」チェックボックスの対象になりうる(区画キー,ll)の一覧＝現在の区画割案(ABC/XY)＋D/E。
+// tallySelectedAreas()とtallySelectedAreasByTier()の両方がこの1本を通す（区画一覧の知識を二重に持たない）。
+function selectedAreaRegionRows(){
+  const subs=currentSubAreas()||[];
+  return [
+    ...subs.map(s=>({key:s.no.split(/\s+/)[0], ll:shapeToLatLngs(s.pts,SITE_XFORM)})),
+    ...(SITE.subAreaSets&&SITE.subAreaSets.DE ? deSubAreaPolys().map(s=>({key:s.key, ll:s.latlngs})) : [])
+  ];
+}
 // 「敷地全体」チェックボックスで選ばれている(区画,段)の組み合わせを1つの仮想区画として合算し、
 // tallyCutFill()と同じ形状（cutFillBodyHTML()にそのまま渡せる）を返す（2026-08-20新設）。
 function tallySelectedAreas(){
   if(!areaSelectState) areaSelectState=defaultAreaSelectState();
-  const subs=currentSubAreas()||[];
-  const rows=[
-    ...subs.map(s=>({key:s.no.split(/\s+/)[0], ll:shapeToLatLngs(s.pts,SITE_XFORM)})),
-    ...(SITE.subAreaSets&&SITE.subAreaSets.DE ? deSubAreaPolys().map(s=>({key:s.key, ll:s.latlngs})) : [])
-  ];
   const acc={total:0,miss:0,cut:[0,0,0,0],fill:[0,0,0,0],cutVol:0,fillVol:0};
   const add=(t)=>{
     acc.total+=t.total; acc.miss+=t.miss; acc.cutVol+=t.cutVol; acc.fillVol+=t.fillVol;
     for(let i=0;i<4;i++){ acc.cut[i]+=t.cut[i]; acc.fill[i]+=t.fill[i]; }
   };
-  rows.forEach(r=>{
+  selectedAreaRegionRows().forEach(r=>{
     add(tallyRegionSelected(r.key, r.ll, trueAreaOfLL(r.ll)));
   });
   return acc;
+}
+// tallySelectedAreas()の片側版：指定した1段(tier='low'|'high')だけの合算を返す（2026-08-20新設・項目4。
+// 「面積一覧表」の「敷地全体」に、既存の合計カードに加えて「上の段だけ」「下の段だけ」の内訳も
+// 並べて出すため。チェックされている区画が1つも無ければanyChecked=falseを返す＝呼び出し側で
+// 「未計算」表示に振り分ける判定に使う）。
+function tallySelectedAreasByTier(tier){
+  if(!areaSelectState) areaSelectState=defaultAreaSelectState();
+  const acc={total:0,miss:0,cut:[0,0,0,0],fill:[0,0,0,0],cutVol:0,fillVol:0};
+  const add=(t)=>{
+    acc.total+=t.total; acc.miss+=t.miss; acc.cutVol+=t.cutVol; acc.fillVol+=t.fillVol;
+    for(let i=0;i<4;i++){ acc.cut[i]+=t.cut[i]; acc.fill[i]+=t.fill[i]; }
+  };
+  let anyChecked=false;
+  selectedAreaRegionRows().forEach(r=>{
+    const st=areaSelectState[r.key]||{low:false,high:false};
+    if(!st[tier]) return;
+    anyChecked=true;
+    if(FLAT_PLANES[tier]) add(tallyCutFillAtElev((la,lo)=>pointInLLPoly(la,lo,r.ll), trueAreaOfLL(r.ll), FLAT_PLANES[tier].elev));
+  });
+  return {...acc, anyChecked};
 }
 // 4段階＋累計坪の表（新方式の表の正本）。切土/盛土は合算して1本にする
 // （方向別の2表は見づらいとの指摘を受け統合。土量(㎥)だけは引き続き切土/盛土を分けて示す）。
@@ -3096,32 +3138,54 @@ function areaSelectCheckboxesHTML(){
   }).join('');
   return `<div class="hint" style="margin:2px 0 8px">下の「敷地全体」に含める区画・段を選ぶパラメータです（表示自体は選んだ区画・段の合計）：<br>${rowsHtml}</div>`;
 }
+// 「敷地全体（選んだ区画・段の合算値）」セクション：既存の合計カードに加え、「下の段だけ」「上の段だけ」の
+// 内訳も並べて出す（2026-08-20新設・項目4。腱さん指摘「高い面・低い面・合計が見えるように」）。
+// 3枚のカードを、区画別の内訳とは毛色を変えた枠（青系#132436/#3b82f6＝regionCardHTML()のisTotalと同じ
+// 「合算値」を示す色を、セクション全体に拡張）で囲む＝「これは合算値」と一目で分かるようにする。
+function areaListTotalSectionHTML(){
+  const tierLabel={low:'下の段', high:'上の段'};
+  const tierCard=(tier)=>{
+    const t=tallySelectedAreasByTier(tier);
+    const body = (t.anyChecked && FLAT_PLANES[tier]) ? cutFillBodyHTML(t)
+      : `<div class="hint" style="margin:2px 0 4px">未計算（対象の区画が選ばれていないか、${tierLabel[tier]}がまだ計算されていません）</div>`;
+    return regionCardHTML(tierLabel[tier], body, false);
+  };
+  // isTotal=trueの色(#132436/#3b82f6)はこの関数の外枠と同じ色のため、内側の「合計」カードにも
+  // isTotal=trueを使うと外枠と同化して境界が見えなくなる。3枚とも内側カードはisTotal=false（グレー枠）で
+  // 揃え、「これは合算値」という強調は外枠1箇所だけで表現する（色の二重使いを避ける）。
+  return `<div style="margin-top:10px;padding:8px;background:#132436;border:1px solid #3b82f6;border-radius:8px">`
+    + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin-bottom:6px">敷地全体（選んだ区画・段の合算値）</div>`
+    + tierCard('low') + tierCard('high')
+    + regionCardHTML('合計', cutFillBodyHTML(tallySelectedAreas()), false)
+    + `</div>`;
+}
 function computeFlatAreasCutFill(el){
   const all=tallyCutFill(pointInSite, siteTrueAreaM2());
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`;
   if(currentSubAreas()){
-    html += areaSelectCheckboxesHTML();   // 区画割案を持つ物件：対象を選ぶチェックボックス（パラメータ設定）
-    html += `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">敷地全体（選んだ区画・段の合計）の面積一覧</div>`
-      + regionCardHTML('敷地全体', cutFillBodyHTML(tallySelectedAreas()), true);   // 他区画と同じ4カテゴリ×坪の詳細内訳
+    // 2026-08-20（項目4）：並び順を「パラメータ設定→区画別の内訳→敷地全体」に変更
+    // （腱さん指摘「区画別の内訳が上、敷地全体が一番下で毛色が違う」）。
+    html += `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin-bottom:6px;border-bottom:1px solid #2a3542;padding-bottom:4px">パラメータ設定</div>`
+      + areaSelectCheckboxesHTML();   // 対象を選ぶチェックボックス
+
+    // 区画別の内訳：ABC/XY区画とD/E区画を同じ並びに統合する（「隣接筆（D/E）」という別見出しには分けない。
+    // 腱さん指示「区画別の内訳の並びに含める」）。D/Eの精度注意書きはD/Eカードの直前に残す。
+    html += `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">区画別の内訳${subAreaVariant?`（${subAreaVariant}）`:''}</div>`;
+    const subs=subAreaPolys();
+    subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
+    // 2026-08-20（項目2）：ABC/XYと違い、D/EはtallyCutFill()ではなくtallyRegionSelected()（areaSelectState
+    // ＝下の「敷地全体」チェックボックスが選んでいる段）を通す。D/Eの既定チェックはlow:false,high:trueで
+    // 「現在アクティブな面（ACTIVE_PLANE）」とは独立に選べるため、tallyCutFill()（アクティブな面固定）のままだと
+    // 価格シミュの使える面積比行（regionUsableAreaSelected()＝同じareaSelectStateを見る）と数字が食い違う
+    // バグがあった（腱さん報告「DEの坪数が上の区画ごとの表の『土工までの累計坪』になってない」。docs/BUGLOG.md参照）。
+    const des=deSubAreaPolys();
+    if(des.length) html += deAccuracyHintHTML();
+    des.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyRegionSelected(s.key, s.latlngs, trueAreaOfLL(s.latlngs))), false); });
+
+    html += areaListTotalSectionHTML();   // 敷地全体（合算値）：最後・毛色を変える
   } else {
     html += `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">高低差ごとの面積一覧</div>`
       + regionCardHTML('敷地全体', cutFillBodyHTML(all), true);   // 単一区画の物件：既存のまま無変更
-  }
-  const subs=subAreaPolys();
-  if(subs.length){
-    html+=`<div style="margin:2px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">区画別の内訳（${subAreaVariant||''}）</div>`;
-    subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
-  }
-  // 隣接筆D/E（実在の別地。案の選択に関わらず常に出す＝同じ敷地の分割案ABC/XYと混ざらないよう別見出し）
-  // 2026-08-20（項目2）：ABC/XYのsubs.forEach()と違い、D/EはtallyCutFill()ではなくtallyRegionSelected()（areaSelectState
-  // ＝下の「敷地全体」チェックボックスが選んでいる段）を通す。D/Eの既定チェックはlow:false,high:trueで
-  // 「現在アクティブな面（ACTIVE_PLANE）」とは独立に選べるため、tallyCutFill()（アクティブな面固定）のままだと
-  // 価格シミュの使える面積比行（regionUsableAreaSelected()＝同じareaSelectStateを見る）と数字が食い違う
-  // バグがあった（腱さん報告「DEの坪数が上の区画ごとの表の『土工までの累計坪』になってない」。docs/BUGLOG.md参照）。
-  const des=deSubAreaPolys();
-  if(des.length){
-    html+=`<div style="margin:8px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">隣接筆（D/E）</div>`+deAccuracyHintHTML();
-    des.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyRegionSelected(s.key, s.latlngs, trueAreaOfLL(s.latlngs))), false); });
   }
   html+=`<div style="margin-top:6px">`+
     `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
