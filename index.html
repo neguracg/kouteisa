@@ -273,8 +273,8 @@
 
           <div id="planeToggleWrap" style="display:none;margin-bottom:8px">
             <div style="display:flex;gap:6px">
-              <button id="planeBtnLow" class="small" style="flex:1" onclick="selectPlaneFocus('low')">低い面<br><span id="planeBtnLowElev" style="font-weight:400;font-size:10px"></span></button>
-              <button id="planeBtnHigh" class="small" style="flex:1" onclick="selectPlaneFocus('high')">高い面<br><span id="planeBtnHighElev" style="font-weight:400;font-size:10px"></span></button>
+              <button id="planeBtnLow" class="small" style="flex:1" onclick="selectPlaneFocus('low')">下の段<br><span id="planeBtnLowElev" style="font-weight:400;font-size:10px"></span></button>
+              <button id="planeBtnHigh" class="small" style="flex:1" onclick="selectPlaneFocus('high')">上の段<br><span id="planeBtnHighElev" style="font-weight:400;font-size:10px"></span></button>
             </div>
           </div>
 
@@ -1455,11 +1455,11 @@ function exportSitePlannerCSV(){
 # 【データの読み方】
 # 1列目 dataset: どの図形に属するかを示す名前。
 #   site_outline               = 敷地の外周（位置・角度・倍率を調整した最終配置）
-#   low_50cm_1, low_50cm_2,... = 低い面（基準標高${lowElev!=null?lowElev.toFixed(1)+'m':'未計算のため出力なし'}）の
+#   low_50cm_1, low_50cm_2,... = 下の段（基準標高${lowElev!=null?lowElev.toFixed(1)+'m':'未計算のため出力なし'}）の
 #     「使える範囲（高低差±${Math.round(thM*100)}cm以内）」境界線。地形により分離した島がある場合は
 #     _1,_2,...の連番で複数系列に分かれます。
-#   high_50cm_1, high_50cm_2,... = 高い面（基準標高${highElev!=null?highElev.toFixed(1)+'m':'未計算のため出力なし'}）の同上。
-#   flat_50cm_1, flat_50cm_2,... = 低い面/高い面の区別が無い物件（単一区画）で、現在の基準点
+#   high_50cm_1, high_50cm_2,... = 上の段（基準標高${highElev!=null?highElev.toFixed(1)+'m':'未計算のため出力なし'}）の同上。
+#   flat_50cm_1, flat_50cm_2,... = 下の段/上の段の区別が無い物件（単一区画）で、現在の基準点
 #     （基準標高${(!SITE.purchaseSets&&lowElev!=null)?lowElev.toFixed(1)+'m':'—'}）を基準にした同上の境界線。
 # 2列目 seq: 同じdataset内での点の順番（0始まり）。
 # 3列目 x, 4列目 y: 上記座標系での位置（メートル）。
@@ -2234,7 +2234,7 @@ function drawCdeAnchor(){
   if(cdeAnchor.lat==null) return;   // 数値直接指定（setCdeAnchorByElev）は地図上に描く座標が無い。
                                      // 標高の伝達はcdeAnchorReadout（updateCdeAnchorUI）に一本化する。
   makeDot(cdeAnchorLayer,[cdeAnchor.lat,cdeAnchor.lon],'#22c55e',true, ll=>setCdeAnchor(ll));
-  const txt='高い面の目印　標高 '+(cdeAnchor.elev!=null?cdeAnchor.elev.toFixed(1)+'m':'取得中…');
+  const txt='上の段の目印　標高 '+(cdeAnchor.elev!=null?cdeAnchor.elev.toFixed(1)+'m':'取得中…');
   makeLabel(cdeAnchorLayer, L.latLng(cdeAnchor.lat,cdeAnchor.lon), txt, '#22c55e', true);
 }
 function toggleCdeAnchorMode(){
@@ -2434,7 +2434,7 @@ async function optimizePlaneForPurchaseSet(setKey){
   activatePlane('high');   // 内部でflatRef差替え・保存・recomputeFlatOnly()（drawFlat()まで）・updatePlanesUI()まで行う
   const prog=document.getElementById('flatProg');
   const shownArea=polys.reduce((s,p)=>s+(usableAreaOfLL(p.latlngs, usableM)||0), 0);
-  if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／高い面／目印点±${CDE_ANCHOR_WINDOW_M}m）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${shownArea.toFixed(0)}㎡が最大`;
+  if(prog) prog.textContent=`自動選択（${SITE.purchaseSets[setKey].label}／上の段／目印点±${CDE_ANCHOR_WINDOW_M}m）：基準標高${bestCell.elev.toFixed(1)}m → 使える面積(±${Math.round(usableM*100)}cm以内) 約${shownArea.toFixed(0)}㎡が最大`;
   updatePlanesUI();
 }
 
