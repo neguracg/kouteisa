@@ -3252,7 +3252,14 @@ function drawCutFillOutlines(){
   const {g,cols,rows,en0,cells,cLat,cLon}=FLAT_GRID;
   const mLat=111320, mLon=111320*Math.cos(rad(cLat));
   const toLL=(e,n)=>({lat:cLat+n/mLat, lon:cLon+e/mLon});
-  const inSiteArr=cells.map(c=>pointInSite(c.lat,c.lon));
+  // 2026-08-20（項目3）：従来pointInSite()（ABC敷地のみ）だけで内外判定しており、D/E（隣接2筆）は
+  // この境界線の対象外だった。腱さんがD/EをC区画と隙間なく(flush)調整したため、C+D+Eを1つの連続した
+  // 敷地として境界線を引けるはずが引けていなかった（腱さん指摘「30cm50cm両方のエリア＝つかえるえりあを
+  // しめす緑の点線がDとEをふくめた敷地全体で描画できるようにして」）。drawFlat()のセル塗り分け
+  // （2026-08-19、BUGLOG参照）と同じ「pointInSite() || D/EのいずれかのpointInLLPoly()」判定に揃える
+  // （D/Eを持たない物件ではdeSubAreaPolys()が空配列を返すため、pointInSite()単体と同じ結果になり無害）。
+  const des=deSubAreaPolys();
+  const inSiteArr=cells.map(c=>pointInSite(c.lat,c.lon) || des.some(s=>pointInLLPoly(c.lat,c.lon,s.latlngs)));
   const MIN_ISLAND=2;
   const drawGroup=(maskRaw, opts)=>{
     const {comp,sizes}=gridComponents(maskRaw, rows, cols);
