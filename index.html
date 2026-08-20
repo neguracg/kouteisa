@@ -1948,12 +1948,19 @@ function segT(p1,p2,p3,p4){ // t along p1->p2 where it crosses p3-p4 (x=lon,y=la
   const t=((x1-x3)*(y3-y4)-(y1-y3)*(x3-x4))/den, u=((x1-x3)*(y1-y2)-(y1-y3)*(x1-x2))/den;
   return (t>=0&&t<=1&&u>=0&&u<=1)?t:null;
 }
-function clipToSite(s,e){ // 線分s->eのうち敷地内部分を返す
+function clipToSite(s,e){ // 線分s->eのうちABC敷地内またはD/E内の部分を返す
+  // 2026-08-21（項目2）：D/E（隣接2筆）だけを通る断面はここがABC限定のままだとnullを返し、
+  // drawBand()/showStripSection()が地図上に線を一切描かない＝クリックもできなくなっていた。
+  // ABCの辺に加えD/E各区画の辺も交差候補に含め、内外判定もpointInSite()||D/EのpointInLLPoly()に揃える
+  // （drawCutFillOutlines()と同じOR判定パターン。D/Eを持たない物件はdeSubAreaPolys()が空配列を返すため無害）。
+  const des=deSubAreaPolys();
   const ts=[0,1];
   for(let i=0;i<siteLatLngs.length;i++){const t=segT(s,e,siteLatLngs[i],siteLatLngs[(i+1)%siteLatLngs.length]); if(t!=null) ts.push(t);}
+  des.forEach(d=>{ const p=d.latlngs; for(let i=0;i<p.length;i++){ const t=segT(s,e,p[i],p[(i+1)%p.length]); if(t!=null) ts.push(t); } });
   ts.sort((a,b)=>a-b);
   const lp=t=>({lat:s.lat+(e.lat-s.lat)*t, lon:s.lon+(e.lon-s.lon)*t});
-  for(let i=0;i<ts.length-1;i++){const tm=(ts[i]+ts[i+1])/2,mp=lp(tm); if(pointInSite(mp.lat,mp.lon)) return [lp(ts[i]),lp(ts[i+1])];}
+  const inSiteOrDE=(lat,lon)=> pointInSite(lat,lon) || des.some(d=>pointInLLPoly(lat,lon,d.latlngs));
+  for(let i=0;i<ts.length-1;i++){const tm=(ts[i]+ts[i+1])/2,mp=lp(tm); if(inSiteOrDE(mp.lat,mp.lon)) return [lp(ts[i]),lp(ts[i+1])];}
   return null;
 }
 let BAND_STRIPS=[];   // {samples,startLL,endLL,base,baseEN,up,twoH,reach,none}
@@ -1973,6 +1980,11 @@ async function generateBand(){
   const Aen=toEN(A),Ben=toEN(B); let De=Ben.e-Aen.e,Dn=Ben.n-Aen.n; const L=Math.hypot(De,Dn)||1; De/=L;Dn/=L;
   const Fe=-Dn, Fn=De;
   const sEN=siteLatLngs.map(toEN);
+  // 2026-08-21（項目2）：D/E（隣接2筆）を持つ物件は、断面(strip)を生成する範囲(aMin/aMax/bMin/bMax)を
+  // D/Eの外周まで広げる（generateFlat()と同じ「sEN.push」パターン）。ABCのみの範囲だとD/Eがこの外に
+  // 出た場合、そこには断面が1本も生成されずD/E部分の崖検出自体が起こらない（後段のセルbboxを広げても
+  // 無意味）。D/Eを持たない物件はdeSubAreaPolys()が空配列を返すため無害（挙動は従来と完全に同一）。
+  deSubAreaPolys().forEach(d=>d.latlngs.forEach(p=>sEN.push(toEN(p))));
   const aArr=sEN.map(p=>p.e*De+p.n*Dn), bArr=sEN.map(p=>p.e*Fe+p.n*Fn);
   const aMin=Math.min(...aArr),aMax=Math.max(...aArr),bMin=Math.min(...bArr),bMax=Math.max(...bArr);
   /* ===== 両崖（崖上＋崖下）モード：敷地の両側で崖を検出し2本の2H帯を重ねる ===== */
@@ -2078,12 +2090,18 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
   // 影響帯ポリゴン（崖ヘリライン→2H影響ライン）。これに対する内外で判定＝描画と一致
   const encRed = redOK.length>=2 ? redOK.map(s=>({lat:s.base.lat,lon:s.base.lon})).concat(redOK.map(s=>({lat:s.reach.lat,lon:s.reach.lon})).reverse()) : null;
   const encCyan= cyanOK.length>=2 ? cyanOK.map(s=>({lat:s.cyan.base.lat,lon:s.cyan.base.lon})).concat(cyanOK.map(s=>({lat:s.cyan.reach.lat,lon:s.cyan.reach.lon})).reverse()) : null;
+  // 2026-08-21（項目2）：D/E（隣接2筆）もセルの走査・採否判定に含める。drawCutFillOutlines()と同じ
+  // 「pointInPoly()（ABC） || D/EのいずれかのpointInPoly()」のOR判定パターンを流用（D/Eを持たない
+  // 物件はdeSubAreaPolys()が空配列を返すため、pointInPoly(sEN)単体と同じ結果になり無害）。
+  const des=deSubAreaPolys();
+  const desEN=des.map(d=>({key:d.key, en:d.latlngs.map(toEN)}));
   const sEN=siteLatLngs.map(toEN);
-  const eMin=Math.min(...sEN.map(p=>p.e)),eMax=Math.max(...sEN.map(p=>p.e));
-  const nMin=Math.min(...sEN.map(p=>p.n)),nMax=Math.max(...sEN.map(p=>p.n));
+  const bboxEN=sEN.concat(...desEN.map(d=>d.en));   // 走査範囲(bbox)もD/Eの外周まで広げる
+  const eMin=Math.min(...bboxEN.map(p=>p.e)),eMax=Math.max(...bboxEN.map(p=>p.e));
+  const nMin=Math.min(...bboxEN.map(p=>p.n)),nMax=Math.max(...bboxEN.map(p=>p.n));
   let total=0,usable=0,redA=0,cyanA=0,both=0;
   for(let e=eMin;e<=eMax;e+=1) for(let n=nMin;n<=nMax;n+=1){
-    if(!pointInPoly(e+0.5,n+0.5,sEN)) continue;
+    if(!pointInPoly(e+0.5,n+0.5,sEN) && !desEN.some(d=>pointInPoly(e+0.5,n+0.5,d.en))) continue;
     total++;
     const c=toLL(e+0.5,n+0.5);
     const inRed = !!(encRed && pointInLLPoly(c.lat,c.lon,encRed));
@@ -2097,15 +2115,20 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
     L.rectangle([[sw.lat,sw.lon],[ne.lat,ne.lon]],{stroke:false,fillColor:col,fillOpacity:.30,interactive:false}).addTo(cellLayer);
   }
   const area=polygonArea(siteLatLngs), f=x=>x.toFixed(0);
+  // D/E面積は別地（ABC敷地には含まれない）。price-sim側の既存表現「DE小計（別地・敷地面積には
+  // 含まれない）」（priceSimGroupRowsHTML()）に文言を揃え、ABCの面積とは別行で示す（指示書要求）。
+  const deArea=des.reduce((s,d)=>s+polygonArea(d.latlngs),0);
+  const deLbl = deArea ? `<br><span style="color:#c9a3ff">DE 約${f(deArea)}㎡</span>（別地・敷地面積には含まれない）` : '';
+  const deNote = deArea ? `／判定はABC＋隣接筆(D/E)を合わせた範囲で実施` : '';
   if(encCyan){   // 両崖モード：4分類表示
     L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
-      html:`<div class="arealbl">敷地 ${f(area)}㎡<br><span class="g">使用可 ${f(usable)}㎡</span><br><span style="color:#ff6b8a">崖上 ${f(redA)}</span> / <span style="color:#38bdf8">崖下 ${f(cyanA)}</span> / <span style="color:#c9a3ff">両 ${f(both)}</span> ㎡</div>`})}).addTo(bandLayer);
-    el.innerHTML=`<b>敷地 約${f(area)}㎡</b>（格子1m概算）<br>■ 使用可能（両方の2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 崖上（赤）の影響のみ：約${f(redA)}㎡<br>■ 崖下（シアン）の影響のみ：約${f(cyanA)}㎡<br>■ 両方の影響（紫）：約${f(both)}㎡<br>■ 要対策 合計（使用可以外）：<b>約${f(total-usable)}㎡</b><br><span class="src">緑=使用可／赤=崖上2H内／シアン=崖下2H内／紫=両方。太線＝各2H影響ライン。薄い灰線=各断面（クリック/←→で切替）。正式判断は実測断面図・設計者・行政協議。</span>`;
+      html:`<div class="arealbl">敷地 ${f(area)}㎡${deArea?`／DE ${f(deArea)}㎡`:''}<br><span class="g">使用可 ${f(usable)}㎡</span><br><span style="color:#ff6b8a">崖上 ${f(redA)}</span> / <span style="color:#38bdf8">崖下 ${f(cyanA)}</span> / <span style="color:#c9a3ff">両 ${f(both)}</span> ㎡</div>`})}).addTo(bandLayer);
+    el.innerHTML=`<b>敷地 約${f(area)}㎡</b>${deLbl}（格子1m概算）<br>■ 使用可能（両方の2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 崖上（赤）の影響のみ：約${f(redA)}㎡<br>■ 崖下（シアン）の影響のみ：約${f(cyanA)}㎡<br>■ 両方の影響（紫）：約${f(both)}㎡<br>■ 要対策 合計（使用可以外）：<b>約${f(total-usable)}㎡</b><br><span class="src">緑=使用可／赤=崖上2H内／シアン=崖下2H内／紫=両方。太線＝各2H影響ライン。薄い灰線=各断面（クリック/←→で切替）${deNote}。正式判断は実測断面図・設計者・行政協議。</span>`;
   } else {       // 単崖モード：従来表示（函南など）
     const enclosed=encRed?polygonArea(encRed):0;
     L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
-      html:`<div class="arealbl">敷地 ${f(area)}㎡<br><span class="g">使用可 ${f(usable)}㎡</span> / <span class="r">影響内 ${f(total-usable)}㎡</span></div>`})}).addTo(bandLayer);
-    el.innerHTML=`<b>敷地 約${f(area)}㎡</b>（格子1m概算）<br>■ 使用可能（2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 2H影響内（要対策面積）：<b>約${f(total-usable)}㎡</b><br>■ がけ対策対象面積（2Hライン囲み）：約${f(enclosed)}㎡<br><span class="src">緑=使用可/赤=影響内。赤線=2H影響ライン。薄い灰線=各断面（クリック/←→で切替）。正式判断は実測断面図・設計者・行政協議。</span>`;
+      html:`<div class="arealbl">敷地 ${f(area)}㎡${deArea?`／DE ${f(deArea)}㎡`:''}<br><span class="g">使用可 ${f(usable)}㎡</span> / <span class="r">影響内 ${f(total-usable)}㎡</span></div>`})}).addTo(bandLayer);
+    el.innerHTML=`<b>敷地 約${f(area)}㎡</b>${deLbl}（格子1m概算）<br>■ 使用可能（2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 2H影響内（要対策面積）：<b>約${f(total-usable)}㎡</b><br>■ がけ対策対象面積（2Hライン囲み）：約${f(enclosed)}㎡<br><span class="src">緑=使用可/赤=影響内。赤線=2H影響ライン。薄い灰線=各断面（クリック/←→で切替）${deNote}。正式判断は実測断面図・設計者・行政協議。</span>`;
   }
 }
 function clearBand(){
@@ -4176,6 +4199,9 @@ function selectRepresentative(){
 }
 function fitToBand(){
   const pts=siteLatLngs.map(p=>[p.lat,p.lon]);
+  // 2026-08-21（項目2）：D/Eの外周点も含める。2Hラインがreach点より内側で収まりD/Eの遠い角が
+  // ビューから外れるケースの保険（軽微・低リスクな1行追加。D/Eを持たない物件は空配列で無害）。
+  deSubAreaPolys().forEach(d=>d.latlngs.forEach(p=>pts.push([p.lat,p.lon])));
   BAND_STRIPS.forEach(s=>{ if(s.reach) pts.push([s.reach.lat,s.reach.lon]); if(s.cyan&&s.cyan.reach) pts.push([s.cyan.reach.lat,s.cyan.reach.lon]); });
   if(pts.length>1) map.fitBounds(pts,{padding:[40,40]});
 }
