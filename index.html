@@ -339,9 +339,10 @@
         </div>
       </div>
       <!-- 面積一覧表ブロック（2026-08-20再編・項目4）。中身(#flatResult)はcomputeFlatAreas()が丸ごと
-           書き出す＝パラメータ設定(チェックボックス)→区画別の内訳→敷地全体、の順で1つのHTMLにする
-           （computeFlatAreasCutFill()参照）。未計算時はタイトルだけ見えて中身は空（他ブロックと同じ
-           「見出しは常設・中身は計算後に出る」という既存の見せ方を踏襲）。 -->
+           書き出す＝区画別の内訳→敷地全体（パラメータ設定のチェックボックスは敷地全体の中の先頭）、
+           の順で1つのHTMLにする（computeFlatAreasCutFill()参照。パラメータ設定の位置は2026-08-20
+           項目2で区画別の内訳より前から敷地全体ブロックの先頭へ移動した）。未計算時はタイトルだけ
+           見えて中身は空（他ブロックと同じ「見出しは常設・中身は計算後に出る」という既存の見せ方を踏襲）。 -->
       <div id="areaListBlock" style="margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
         <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:6px">面積一覧表</div>
         <div class="note" id="flatResult" style="display:none"></div>
