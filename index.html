@@ -1463,6 +1463,17 @@ function exportSitePlannerCSV(){
     const p=toEN(ll.lat, ll.lon);
     rowsOut.push(['site_outline', i, p.e.toFixed(3), p.n.toFixed(3)]);
   });
+  // 2026-08-20（腱さん実機報告で発覚）：D/E（隣接2筆）自体の外周が一度もCSVに出ておらず、
+  // low_50cm/high_50cmの「使える範囲」の島（D/E領域まで含む）だけが、それがどの区画の
+  // 内側にあるか示す枠（D/Eの外周）無しに出力されていた。SitePlanner側はD/Eの実際の境界を
+  // 全く知らないまま、宙に浮いた使える範囲の塊だけを受け取る形になっていた。
+  // site_outline（ABC）と同じ扱いで、D/Eそれぞれの外周も専用datasetとして出す。
+  deSubAreaPolys().forEach(s=>{
+    s.latlngs.forEach((ll,i)=>{
+      const p=toEN(ll.lat, ll.lon);
+      rowsOut.push([`de_outline_${s.key}`, i, p.e.toFixed(3), p.n.toFixed(3)]);
+    });
+  });
   function addLoops(prefix, targetElev){
     if(targetElev==null) return;
     traceElevBoundaryLoops(targetElev, thM).forEach((loop, li)=>{
@@ -1494,7 +1505,9 @@ function exportSitePlannerCSV(){
 #
 # 【データの読み方】
 # 1列目 dataset: どの図形に属するかを示す名前。
-#   site_outline               = 敷地の外周（位置・角度・倍率を調整した最終配置）
+#   site_outline               = 敷地(ABC)の外周（位置・角度・倍率を調整した最終配置）
+#   de_outline_D, de_outline_E = 隣接筆D(1170-1)・E(1404-4)それぞれの外周（個別に位置・角度・
+#     倍率・軸縮尺を調整した最終配置）。この物件がD/Eを持たない場合は出力されません。
 #   low_50cm_1, low_50cm_2,... = 下の段（基準標高${lowElev!=null?lowElev.toFixed(1)+'m':'未計算のため出力なし'}）の
 #     「使える範囲（高低差±${Math.round(thM*100)}cm以内）」境界線。地形により分離した島がある場合は
 #     _1,_2,...の連番で複数系列に分かれます。
