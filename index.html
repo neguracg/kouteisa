@@ -3183,8 +3183,14 @@ function areaListTotalSectionHTML(){
   // isTotal=trueの色(#132436/#3b82f6)はこの関数の外枠と同じ色のため、内側の「合計」カードにも
   // isTotal=trueを使うと外枠と同化して境界が見えなくなる。3枚とも内側カードはisTotal=false（グレー枠）で
   // 揃え、「これは合算値」という強調は外枠1箇所だけで表現する（色の二重使いを避ける）。
+  // 2026-08-20（項目2）：areaSelectCheckboxesHTML()（区画×段のチェックボックス＝パラメータ設定）を
+  // この見出し直後に置く。ここが合算対象を選ぶ唯一のパラメータであり、その効果範囲（このセクションの
+  // 3枚のカード）と同じ場所に置くことで「敷地全体のためのパラメータ」だと一目で分かるようにする
+  // （腱さん報告「このパラメーター設定の場所わかんない。これ敷地全体のパラメーター設定じゃん」＝
+  // 旧位置は区画別の内訳より前で、区画別の内訳にも効くパラメータのように誤解されていた）。
   return `<div style="margin-top:10px;padding:8px;background:#132436;border:1px solid #3b82f6;border-radius:8px">`
     + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin-bottom:6px">敷地全体（選んだ区画・段の合算値）</div>`
+    + areaSelectCheckboxesHTML()
     + tierCard('low') + tierCard('high')
     + regionCardHTML('合計', cutFillBodyHTML(tallySelectedAreas()), false)
     + `</div>`;
@@ -3193,13 +3199,12 @@ function computeFlatAreasCutFill(el){
   const all=tallyCutFill(pointInSite, siteTrueAreaM2());
   let html=`<b>基準標高 ${flatRef.elev!=null?flatRef.elev.toFixed(1)+'m':'—'}</b>（この高さより高い＝切土、低い＝盛土）`;
   if(currentSubAreas()){
-    // 2026-08-20（項目4）：並び順を「パラメータ設定→区画別の内訳→敷地全体」に変更
-    // （腱さん指摘「区画別の内訳が上、敷地全体が一番下で毛色が違う」）。
-    html += `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin-bottom:6px;border-bottom:1px solid #2a3542;padding-bottom:4px">パラメータ設定</div>`
-      + areaSelectCheckboxesHTML();   // 対象を選ぶチェックボックス
-
     // 区画別の内訳：ABC/XY区画とD/E区画を同じ並びに統合する（「隣接筆（D/E）」という別見出しには分けない。
     // 腱さん指示「区画別の内訳の並びに含める」）。D/Eの精度注意書きはD/Eカードの直前に残す。
+    // 2026-08-20（項目2）：「パラメータ設定」（区画×段のチェックボックス）は以前ここ（区画別の内訳より前）
+    // にあったが、areaSelectCheckboxesHTML()は区画別の内訳の表示には一切影響せず「敷地全体」の合算対象を
+    // 選ぶだけのパラメータのため、areaListTotalSectionHTML()側（「敷地全体」見出しの直後）へ移動した
+    // （腱さん報告「このパラメーター設定の場所わかんない。これ敷地全体のパラメーター設定じゃん」）。
     html += `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin:8px 0 6px;border-bottom:1px solid #2a3542;padding-bottom:4px">区画別の内訳${subAreaVariant?`（${subAreaVariant}）`:''}</div>`;
     const subs=subAreaPolys();
     subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
