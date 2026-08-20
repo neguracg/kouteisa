@@ -1569,6 +1569,30 @@ function renderPriceSim(){
       unit2, f, t, y)).join('');
     html+=`<div style="font-weight:700;color:#e6edf3;margin:8px 0 2px">使える面積比(±${(thM*100).toFixed(0)}cm)の試算</div>`
       + `<table class="ftab">${baseUsable>0?'':'<caption style="color:#e07a4a">基準区画(A)の使える面積が0のため試算できません</caption>'}<tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows2}</table>`;
+
+    // 2026-08-20（項目1・交渉ロジック用の3つ目の表）：上の「使える面積比の試算」はareaSelectState
+    // （「敷地全体」チェックボックス）で選んだ段の合算を見るが、交渉の第1段階では「下の段（既存の低い面）
+    // だけ」でAと直接比較できる使える面積を固定して見せる必要がある（腱さん「下の段だけに着目して
+    // 使える面積がこんな少ないんだからこの値段で勘弁してくださいよ、というのをまず言う」）。上の段
+    // （C+D+Eにまたがる新発見の高い段）を混ぜるとCの使える面積が水増しされ、交渉が逆効果になる
+    // （今朝直したバグと同じ罠）＝チェックボックス依存を一切断ち、FLAT_PLANES.low.elevだけで
+    // 全区画（基準区画Aも含む）を評価する固定の表にする。基準区画Aも他区画と全く同じ
+    // usableAreaAtElev(ll, FLAT_PLANES.low.elev, thM)をそのまま使う（上のrows2のbestRefForRegion()の
+    // ようなA専用の独立最適化はしない＝この表は「同じ標高基準で横並び比較する」ことが目的で、
+    // Aだけ別基準にすると比較が成立しなくなる）。
+    if(!FLAT_PLANES.low){
+      html+=`<div class="hint" style="margin-top:6px">先に「平坦度を計算」→「下の段」を計算してください。</div>`;
+    } else {
+      const lowElev=FLAT_PLANES.low.elev;
+      const baseUsableLow=usableAreaAtElev(shapeToLatLngs(base.pts, SITE_XFORM), lowElev, thM);
+      const unit3=baseUsableLow>0 ? effPrice/baseUsableLow : 0;
+      const rows3=groups.map(g=>priceSimGroupRowsHTML(g.items, g.label, baseName,
+        g.label==='DE' ? (r=>usableAreaAtElev(deRegionLatLngs(r.key), lowElev, thM)||0)
+                       : (r=>usableAreaAtElev(shapeToLatLngs(r.pts,SITE_XFORM), lowElev, thM)||0),
+        unit3, f, t, y)).join('');
+      html+=`<div style="font-weight:700;color:#e6edf3;margin:8px 0 2px">使える面積比(±${(thM*100).toFixed(0)}cm)の試算（下の段のみ）</div>`
+        + `<table class="ftab">${baseUsableLow>0?'':'<caption style="color:#e07a4a">基準区画(A)の使える面積が0のため試算できません</caption>'}<tr><th>区画</th><th>㎡</th><th>坪</th><th>試算価格(万円)</th></tr>${rows3}</table>`;
+    }
   }
   el.innerHTML=html;
 }
