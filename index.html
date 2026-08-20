@@ -3009,6 +3009,27 @@ function tallyCutFillAtElev(inTest, trueAreaM2, targetElev){
   }
   return r;
 }
+// 区画1つ分の「areaSelectStateで選ばれている段（低い面/高い面）」の切土/盛土集計
+// （tallyCutFill()と同じ形状。2026-08-20新設・項目2）。
+// 価格シミュレーションの「使える面積比」(regionUsableAreaSelected())と区画別内訳カードが同じ知識
+// （どの段を見るかはareaSelectStateが正本）を共有するための唯一の入口。tallySelectedAreas()（全区画の
+// 合算＝「敷地全体」カード）と、区画別内訳カードの単一区画表示の両方がこの1本を通す。
+// 旧実装は区画別内訳カード側だけtallyCutFill()（＝現在アクティブな面(cells[].dh)のみを見る、
+// areaSelectStateを無視）を使っており、D/E既定の{low:false,high:true}のような「非アクティブな面だけ
+// チェックしている」区画で、価格シミュの使える面積比行とカードの累計坪が一致しないバグがあった
+// （腱さん報告「DEの坪数が上の区画ごとの表の『土工までの累計坪』になってない」。docs/BUGLOG.md参照）。
+function tallyRegionSelected(key, ll, trueArea){
+  const st=(areaSelectState&&areaSelectState[key])||{low:false,high:false};
+  const acc={total:0,miss:0,cut:[0,0,0,0],fill:[0,0,0,0],cutVol:0,fillVol:0};
+  const add=(t)=>{
+    acc.total+=t.total; acc.miss+=t.miss; acc.cutVol+=t.cutVol; acc.fillVol+=t.fillVol;
+    for(let i=0;i<4;i++){ acc.cut[i]+=t.cut[i]; acc.fill[i]+=t.fill[i]; }
+  };
+  const inTest=(la,lo)=>pointInLLPoly(la,lo,ll);
+  if(st.low && FLAT_PLANES.low) add(tallyCutFillAtElev(inTest, trueArea, FLAT_PLANES.low.elev));
+  if(st.high && FLAT_PLANES.high) add(tallyCutFillAtElev(inTest, trueArea, FLAT_PLANES.high.elev));
+  return acc;
+}
 // 「敷地全体」チェックボックスで選ばれている(区画,段)の組み合わせを1つの仮想区画として合算し、
 // tallyCutFill()と同じ形状（cutFillBodyHTML()にそのまま渡せる）を返す（2026-08-20新設）。
 function tallySelectedAreas(){
@@ -3024,10 +3045,7 @@ function tallySelectedAreas(){
     for(let i=0;i<4;i++){ acc.cut[i]+=t.cut[i]; acc.fill[i]+=t.fill[i]; }
   };
   rows.forEach(r=>{
-    const st=areaSelectState[r.key]||{low:false,high:false};
-    const trueArea=trueAreaOfLL(r.ll);
-    if(st.low && FLAT_PLANES.low) add(tallyCutFillAtElev((la,lo)=>pointInLLPoly(la,lo,r.ll), trueArea, FLAT_PLANES.low.elev));
-    if(st.high && FLAT_PLANES.high) add(tallyCutFillAtElev((la,lo)=>pointInLLPoly(la,lo,r.ll), trueArea, FLAT_PLANES.high.elev));
+    add(tallyRegionSelected(r.key, r.ll, trueAreaOfLL(r.ll)));
   });
   return acc;
 }
@@ -3095,10 +3113,15 @@ function computeFlatAreasCutFill(el){
     subs.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
   }
   // 隣接筆D/E（実在の別地。案の選択に関わらず常に出す＝同じ敷地の分割案ABC/XYと混ざらないよう別見出し）
+  // 2026-08-20（項目2）：ABC/XYのsubs.forEach()と違い、D/EはtallyCutFill()ではなくtallyRegionSelected()（areaSelectState
+  // ＝下の「敷地全体」チェックボックスが選んでいる段）を通す。D/Eの既定チェックはlow:false,high:trueで
+  // 「現在アクティブな面（ACTIVE_PLANE）」とは独立に選べるため、tallyCutFill()（アクティブな面固定）のままだと
+  // 価格シミュの使える面積比行（regionUsableAreaSelected()＝同じareaSelectStateを見る）と数字が食い違う
+  // バグがあった（腱さん報告「DEの坪数が上の区画ごとの表の『土工までの累計坪』になってない」。docs/BUGLOG.md参照）。
   const des=deSubAreaPolys();
   if(des.length){
     html+=`<div style="margin:8px 0 4px;font-weight:700;color:#9fb0c0;font-size:12px">隣接筆（D/E）</div>`+deAccuracyHintHTML();
-    des.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyCutFill((la,lo)=>pointInLLPoly(la,lo,s.latlngs), trueAreaOfLL(s.latlngs))), false); });
+    des.forEach(s=>{ html+=regionCardHTML(s.no, cutFillBodyHTML(tallyRegionSelected(s.key, s.latlngs, trueAreaOfLL(s.latlngs))), false); });
   }
   html+=`<div style="margin-top:6px">`+
     `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
