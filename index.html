@@ -2185,6 +2185,11 @@ function switchSite(id){
   // clearBand()はこれらを触っておらず、POINTS同様に前物件のデータが残ったまま次の物件に持ち越されて
   // いた（ヨコテン：同じ「switchSite()がリセットし忘れる」機構での別インスタンス。2026-08-17発見）。
   picks=[]; SAMPLES=[]; clearConfirmed();
+  // 2026-08-21：上のpicks/SAMPLES/confirmedCliffsは2026-08-17に修正済みだったが、それらの「地図上の
+  // 見た目」を描くcliffLayer（崖上端・崖下端・2H影響ライン到達点のマーカー）はクリアされておらず、
+  // 前物件の崖判定マーカーが地図に残ったまま次の物件へ持ち越されていた（同じ「switchSite()がリセット
+  // し忘れる」機構の再発。resetSectionState()新設時のヨコテン点検で発見・docs/BUGLOG.md参照）。
+  cliffLayer.clearLayers();
   // ポイント指定（項目2・2026-08-21）も物件ごとの状態。上と同じ「switchSite()がリセットし忘れる」
   // 機構の再発を避けるため、新設時点からここでリセット対象に含めておく。
   pointPick=null; drawPointPickOnMap(); setChartClickMode('point');
