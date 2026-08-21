@@ -573,6 +573,7 @@ let BAND_DONE = false;  // 影響帯を描画したら測線編集UIを隠す
 let curStrip = -1;      // 現在表示中の断面（←→で切替）
 let SHARED_STRIPS = null; // 共有URLから渡された2Hライン（崖上・赤）
 let SHARED_STRIPS2 = null; // 共有URLから渡された2Hライン（崖下・シアン／両崖物件）
+let SHARED_SINGLE_SECTION = false; // 共有URLが2H影響帯を含まない単一断面（測線1本）かどうか
 
 /* ====== 地図 ====== */
 const map = L.map('map',{maxZoom:22}).setView([35.0933, 138.9554], 19);
@@ -1007,7 +1008,10 @@ function loadFromGmaps(){
 /* ====== 測線の描画 ====== */
 function drawMeasure(){
   measureLayer.clearLayers();
-  if(VIEW||BAND_DONE) return;   // 閲覧モード・影響帯描画後は測線を出さない
+  // 通常の閲覧モード（2H影響帯を共有された場合）は測線を隠す（帯のグレー断面線群で代替）。
+  // ただし単一断面の共有（SHARED_SINGLE_SECTION）は帯が無く、測線そのものが唯一の"平面図"の
+  // 手がかりのため、このケースだけは閲覧モードでも測線を出す。
+  if((VIEW && !SHARED_SINGLE_SECTION)||BAND_DONE) return;   // 閲覧モード・影響帯描画後は測線を出さない
   const t=POINTS.top,b=POINTS.bottom;
   // 未配置(placed:false)の点は仮座標があっても地図に一切描かない。中途半端な位置に薄く出す案は
   // 「片方置いた直後、もう片方の仮位置へ変な線が伸びて見える」と再度指摘され撤回（2026-08-17）。
@@ -1622,6 +1626,178 @@ dataset,seq,x,y
   a.download=`kouteisa_${CURRENT_SITE}_cliffband_${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+// bandResult（2H影響帯の面積サマリー欄）の表示文言を、行の配列として取り出す。exportCliffBandImage()
+// の面積サマリーはこれをそのまま転記する（新しい集計はしない＝指示書要求）。<br>区切りをプレーン
+// テキスト化するため、表示中かどうかに関わらず動くようinnerHTMLから直接組み立てる（display:noneでも
+// innerTextは環境によって空になり得るため、それには頼らない）。
+function bandResultLines(){
+  const el=document.getElementById('bandResult');
+  if(!el) return [];
+  const tmp=document.createElement('div');
+  tmp.innerHTML=el.innerHTML.replace(/<br\s*\/?>/gi,'\n');
+  return (tmp.textContent||'').split('\n').map(s=>s.trim()).filter(Boolean);
+}
+// 長い1行を、指定の目安幅(px)に収まる複数行へ機械的に折り返す（SVGの<text>は自動改行しないため）。
+// 句読点・区切り記号の直後を優先して切り、無ければ文字数で強制的に切る（この用途専用の簡易実装、
+// 一般的なテキスト幅測定はしない＝オフスクリーンSVGにcanvas測定を持ち込む複雑さを避ける）。
+function wrapTextJP(text, widthPx, fontSize){
+  const maxChars=Math.max(6, Math.floor(widthPx/fontSize));
+  if(text.length<=maxChars) return [text];
+  const breaks=['。','、','／','/','・',' '];
+  const lines=[]; let rest=text;
+  while(rest.length>maxChars){
+    let cut=-1;
+    for(let i=maxChars;i>Math.floor(maxChars*0.5);i--){ if(breaks.includes(rest[i])){ cut=i+1; break; } }
+    if(cut<0) cut=maxChars;
+    lines.push(rest.slice(0,cut));
+    rest=rest.slice(cut);
+  }
+  if(rest) lines.push(rest);
+  return lines;
+}
+// 2H影響帯を、地図タイルを一切使わない独立したSVG図面としてゼロから描画し、canvas経由でPNG化して
+// {canvas,svgString,W,H}を返す（ダウンロード処理はしない＝呼び出し側のexportCliffBandImage()が行う。
+// ここを分離しておくと、検証時にダウンロードを経由せずcanvas.toDataURL()/getImageData()を直接調べられる）。
+// 地図タイル(GSIタイル)は他オリジンでCORSヘッダーが無くcanvasが汚染されtoDataURL()が例外を投げるため、
+// Leaflet地図のスクリーンショット方式は採用しない（オーケストレータ決定）。
+// 座標変換はcliffBandGeometry()（exportCliffBandCSV()と共有）で作った敷地重心原点のローカル座標を
+// そのままSVG座標へ写像するだけ＝CSVの内容と寸分違わない形状になる。
+function buildCliffBandCanvas(){
+  return new Promise((resolve,reject)=>{
+    const geo=cliffBandGeometry();
+    const allPts=geo.site.concat(...geo.de.map(d=>d.pts), geo.red||[], geo.cyan||[]);
+    if(!allPts.length){ reject(new Error('描画する図形がありません')); return; }
+    // drawCellsAndAreas()と同じ出し分け条件（encCyanの有無=cyanOK>=2）をそのまま流用。
+    // 崖上/崖下の呼び分けはredの有無ではなくcyanの有無で決まる（bandResultの実際の文言と揃える）。
+    const dual=!!geo.cyan;
+    const NS='http://www.w3.org/2000/svg';
+    const svg=document.createElementNS(NS,'svg');
+    svg.setAttribute('xmlns',NS);
+    const add=(tag,a,txt)=>{const el=document.createElementNS(NS,tag);for(const k in a)el.setAttribute(k,a[k]);if(txt!=null)el.textContent=txt;svg.appendChild(el);return el;};
+
+    const W=1000, MX=50, MT=92;
+    const eMin=Math.min(...allPts.map(p=>p.e)), eMax=Math.max(...allPts.map(p=>p.e));
+    const nMin=Math.min(...allPts.map(p=>p.n)), nMax=Math.max(...allPts.map(p=>p.n));
+    const spanE0=Math.max(1e-6, eMax-eMin), spanN0=Math.max(1e-6, nMax-nMin);
+    const padM=Math.max(3, spanE0*0.08, spanN0*0.08);   // 図形の周囲に余白（8%、最低3m）
+    const spanE=spanE0+padM*2, spanN=spanN0+padM*2;
+    const plotW=W-MX*2, maxPlotH=760;
+    let scale=plotW/spanE, plotH=spanN*scale;            // まず幅いっぱいに収める倍率
+    if(plotH>maxPlotH){ scale=maxPlotH/spanN; plotH=maxPlotH; }   // 縦に伸びすぎる地形は高さで再計算
+    const usedW=spanE*scale, offX=MX+(plotW-usedW)/2;     // 使う幅がplotWより狭ければ中央寄せ
+    const X=e=>offX+(e-(eMin-padM))*scale;
+    const Y=n=>MT+((nMax+padM)-n)*scale;                  // 北=上（nが大きいほどyが小さい）
+
+    // 背景（白地。ハウスメーカー・不動産への提示資料として印刷向き）。高さは全内容を積み終えてから確定。
+    const bg=add('rect',{x:0,y:0,width:W,height:2000,fill:'#ffffff'});
+
+    // タイトル・生成日時
+    add('text',{x:W/2,y:32,'text-anchor':'middle','font-size':21,'font-weight':700,fill:'#16212e',
+      'font-family':'"Segoe UI",system-ui,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif'},
+      `${SITE.name} 2H影響帯（がけ条例 一次スクリーニング）`);
+    add('text',{x:W/2,y:54,'text-anchor':'middle','font-size':12.5,fill:'#5b6b7a'},
+      `生成日時: ${new Date().toLocaleString('ja-JP')}`);
+    add('line',{x1:MX,y1:70,x2:W-MX,y2:70,stroke:'#dfe6ec','stroke-width':1});
+
+    // プロット枠
+    add('rect',{x:MX,y:MT,width:plotW,height:plotH,fill:'#f5f8fa',stroke:'#c7d2db','stroke-width':1});
+
+    // 図形（敷地→D/E→2H帯の順で、帯を一番上に重ねる）
+    const polyPts=pts=>pts.map(p=>`${X(p.e).toFixed(1)},${Y(p.n).toFixed(1)}`).join(' ');
+    add('polygon',{points:polyPts(geo.site), fill:'rgba(46,204,113,0.12)', stroke:COL.site,'stroke-width':2.5,'stroke-linejoin':'round'});
+    geo.de.forEach(d=>{
+      add('polygon',{points:polyPts(d.pts), fill:'none', stroke:'#7c3aed','stroke-width':2,'stroke-dasharray':'6,4','stroke-linejoin':'round'});
+    });
+    if(geo.red)  add('polygon',{points:polyPts(geo.red),  fill:'rgba(255,59,107,0.32)', stroke:'#ff3b6b','stroke-width':2.5,'stroke-linejoin':'round'});
+    if(geo.cyan) add('polygon',{points:polyPts(geo.cyan), fill:'rgba(0,179,255,0.32)',  stroke:'#00b3ff','stroke-width':2.5,'stroke-linejoin':'round'});
+
+    // 方位記号（ローカル座標は真北基準なので、単純な上向き矢印でよい＝指示書のとおり）
+    const naX=W-MX-28, naY=MT+40;
+    add('line',{x1:naX,y1:naY+20,x2:naX,y2:naY-14,stroke:'#16212e','stroke-width':2.5});
+    add('polygon',{points:`${naX-7},${naY-4} ${naX+7},${naY-4} ${naX},${naY-18}`, fill:'#16212e'});
+    add('text',{x:naX,y:naY+36,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'#16212e'},'北');
+
+    // スケールバー（図の大きさに応じてキリのいい長さを選ぶ）
+    const niceLens=[1,2,5,10,20,50,100,200,500,1000];
+    let barLenM=niceLens[0];
+    niceLens.forEach(v=>{ if(v<=spanE0*0.3) barLenM=v; });
+    const barX0=MX+16, barY=MT+plotH-18, barPx=barLenM*scale;
+    add('line',{x1:barX0,y1:barY,x2:barX0+barPx,y2:barY,stroke:'#16212e','stroke-width':3});
+    add('line',{x1:barX0,y1:barY-6,x2:barX0,y2:barY+6,stroke:'#16212e','stroke-width':3});
+    add('line',{x1:barX0+barPx,y1:barY-6,x2:barX0+barPx,y2:barY+6,stroke:'#16212e','stroke-width':3});
+    add('text',{x:barX0+barPx/2,y:barY-10,'text-anchor':'middle','font-size':12,fill:'#16212e'}, `${barLenM}m`);
+
+    // 凡例（色の意味：使用可能／崖上2H影響／崖下2H影響／(D/E外周)。2列に並べ、テキスト幅の実測なしで
+    // レイアウトが崩れないようにする）
+    const legendItems=[{color:'#19c37d', label:'使用可能（2H影響の外）'}];
+    if(geo.red)  legendItems.push({color:'#ff3b6b', label: dual?'崖上（赤）2H影響（要対策）':'2H影響内（要対策範囲）'});
+    if(geo.cyan) legendItems.push({color:'#00b3ff', label:'崖下（シアン）2H影響（要対策）'});
+    if(geo.de.length) legendItems.push({color:'#7c3aed', label:'隣接筆(D/E)外周', dashed:true});
+    let cursorY=MT+plotH+30;
+    const col2X=MX+plotW/2;
+    legendItems.forEach((item,i)=>{
+      const col=i%2, row=Math.floor(i/2);
+      const lx=col===0?MX:col2X, ly=cursorY+row*24;
+      if(item.dashed){ add('line',{x1:lx,y1:ly-4,x2:lx+22,y2:ly-4,stroke:item.color,'stroke-width':2.5,'stroke-dasharray':'4,3'}); }
+      else{ add('rect',{x:lx,y:ly-11,width:22,height:14,fill:item.color,opacity:0.55,stroke:item.color,'stroke-width':1.5}); }
+      add('text',{x:lx+30,y:ly+3,'font-size':13,fill:'#16212e'}, item.label);
+    });
+    cursorY += Math.ceil(legendItems.length/2)*24 + 14;
+
+    // 面積の要約テキスト：bandResultに既に表示されている文言をそのまま転記（新しい集計はしない）
+    bandResultLines().forEach((line,i)=>{
+      const fs = i===0 ? 15.5 : 12.5;
+      wrapTextJP(line, plotW, fs).forEach(w=>{
+        add('text',{x:MX,y:cursorY,'font-size':fs,'font-weight':i===0?700:400,fill:i===0?'#16212e':'#33414d'}, w);
+        cursorY += fs+6;
+      });
+    });
+
+    // 免責（指示書の1文をそのまま使用。既存の免責文言のトーンに揃える）
+    cursorY += 8;
+    wrapTextJP('正式判断には現地測量・崖上端下端の実測・行政協議が必要です。', plotW, 11.5).forEach(w=>{
+      add('text',{x:MX,y:cursorY,'font-size':11.5,fill:'#7a8794'}, w); cursorY += 17;
+    });
+
+    const H=Math.ceil(cursorY+16);
+    svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+    svg.setAttribute('width',W); svg.setAttribute('height',H);
+    bg.setAttribute('height',H);
+
+    const svgString=new XMLSerializer().serializeToString(svg);
+    const img=new Image();
+    img.onload=()=>{
+      const SCALE=2;   // 高解像度化（不動産・ハウスメーカー提示用に印刷しても粗くならないように）
+      const canvas=document.createElement('canvas');
+      canvas.width=Math.round(W*SCALE); canvas.height=Math.round(H*SCALE);
+      const ctx=canvas.getContext('2d');
+      ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      // geo/X/Yも返す＝呼び出し側（検証コード）が「地図上のどのEN座標がcanvas上のどのピクセルか」を
+      // 再計算せずに済む（スクリーンショットが使えない環境でgetImageData()による機械検証を行うための
+      // 最小限の追加。onclick="exportCliffBandImage()"からは使わない値だが、返しても実害はない）。
+      resolve({canvas, svgString, W, H, geo, X, Y, scale});
+    };
+    img.onerror=()=>reject(new Error('SVGの画像化に失敗しました'));
+    // 日本語を含むテキストがあるため、素のbtoaだけだとエラーになる。unescape(encodeURIComponent(...))を
+    // 必ず通す（指示書指定の手法）。
+    img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(svgString)));
+  });
+}
+// がけタブの2H影響帯を、ハウスメーカー・不動産業者向けの提示資料としてPNG画像でダウンロードする
+// （腱さん依頼）。既存exportSitePlannerCSV()/exportCliffBandCSV()と同じくBAND_STRIPS未生成なら
+// 同一文言のアラートで中断し、既存のBlob→<a download>パターンでダウンロードする。
+async function exportCliffBandImage(){
+  if(!BAND_STRIPS.length){ alert('先に「2H影響帯を生成」を実行してください。'); return; }
+  let result;
+  try{ result=await buildCliffBandCanvas(); }
+  catch(e){ console.error(e); alert('画像の生成に失敗しました。'); return; }
+  const url=result.canvas.toDataURL('image/png');
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`kouteisa_${CURRENT_SITE}_cliffband_${new Date().toISOString().slice(0,10)}.png`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 // 区画(key)の「使える面積」＝チェックが入っている段（下/上）の使える面積の合計。
 // 「敷地全体」チェックボックス表と、価格シミュレーションの「使える面積比」の両方がこの関数だけを見る
@@ -4315,7 +4491,32 @@ document.getElementById('chart').addEventListener('click',ev=>{
 function shareURL(){
   const redOK=BAND_STRIPS.filter(s=>s.base);
   const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
-  if(redOK.length<2 && cyanOK.length<2){ alert('先に「2H影響帯を生成」してから共有URLを発行してください。'); return; }
+  if(redOK.length<2 && cyanOK.length<2){
+    // 2H影響帯（帯）が未検出でも、測線1本（「2. 断面図を作成」まで済んだ段階）なら単一断面として
+    // 共有する。腱さんが崖上端・崖下端の2点をクリックして断面図を作っただけの段階でも、その測線を
+    // URLで共有したいという要望（消込表#192）。全体（2H影響帯）共有の条件・処理には一切手を
+    // 加えず、単一断面用の別経路をここに追加するだけ。
+    if(POINTS.top.placed && POINTS.bottom.placed && SAMPLES.length>=2){
+      const v=id=>document.getElementById(id).value;
+      const st={
+        site:CURRENT_SITE,
+        s:[+siteAdj.lat.toFixed(7),+siteAdj.lon.toFixed(7),+siteAdj.rot.toFixed(2),+siteAdj.scale.toFixed(4)],
+        a:[+POINTS.top.lat.toFixed(7),+POINTS.top.lon.toFixed(7)],
+        b:[+POINTS.bottom.lat.toFixed(7),+POINTS.bottom.lon.toFixed(7)],
+        p:[v('pH'),v('pAng'),v('pMul'),v('pWin'),v('pExcl'),v('p10'),v('pStep')],
+        single:1,   // 2H影響帯を含まない、測線1本だけの共有であることの印（applyShared()が読む）
+        g:1
+      };
+      const url=location.origin+location.pathname+'#d='+encodeURIComponent(JSON.stringify(st));
+      navigator.clipboard.writeText(url).then(()=>{
+        const r=document.getElementById('bandResult'); r.style.display='block';
+        r.innerHTML='<b>単一断面の共有URLをコピーしました（2H影響帯は未生成）。</b><br>受け取った人が開くと、この測線1本の平面図と断面図（崖の自動判定結果）が閲覧モードで表示されます。<br><span class="src" style="word-break:break-all">'+url+'</span>'+r.innerHTML;
+      }).catch(()=>prompt('共有URL（コピーしてください）',url));
+      return;
+    }
+    alert('先に「2H影響帯を生成」してから共有URLを発行してください。');
+    return;
+  }
   const v=id=>document.getElementById(id).value;
   const st={
     site:CURRENT_SITE,
@@ -4339,11 +4540,16 @@ function applyShared(){
     const st=JSON.parse(decodeURIComponent(h.slice(i+2)));
     if(st.site && SITES[st.site]){ CURRENT_SITE=st.site; SITE=SITES[st.site]; siteAdj=loadSiteAdj(); }
     if(st.s){ siteAdj={lat:+st.s[0],lon:+st.s[1],rot:+st.s[2],scale:+st.s[3]}; saveSiteAdj(); }
-    if(st.a){ POINTS.top.lat=+st.a[0]; POINTS.top.lon=+st.a[1]; }
-    if(st.b){ POINTS.bottom.lat=+st.b[0]; POINTS.bottom.lon=+st.b[1]; }
+    // .placed=trueも一緒に立てる：これが無いとdrawMeasure()が「まだ配置されていない仮座標」
+    // 扱いのままとなり、単一断面共有で表示すべき測線（始点・終点・破線）が描かれない。
+    if(st.a){ POINTS.top.lat=+st.a[0]; POINTS.top.lon=+st.a[1]; POINTS.top.placed=true; }
+    if(st.b){ POINTS.bottom.lat=+st.b[0]; POINTS.bottom.lon=+st.b[1]; POINTS.bottom.placed=true; }
     if(st.p){ ['pH','pAng','pMul','pWin','pExcl','p10','pStep'].forEach((id,k)=>{ if(st.p[k]!=null&&st.p[k]!=='') document.getElementById(id).value=st.p[k]; }); }
     if(st.L) SHARED_STRIPS=st.L;
     if(st.L2) SHARED_STRIPS2=st.L2;
+    // single:1＝2H影響帯を含まない、測線1本だけの共有（shareURL()参照）。末尾の初期化シーケンスが
+    // これを見てgenerateSection()だけを実行する専用分岐に入る。
+    SHARED_SINGLE_SECTION=!!st.single;
     return !!st.g;
   }catch(e){ return false; }
 }
@@ -4404,7 +4610,11 @@ if(!VIEW){ fetchElev('top'); fetchElev('bottom'); }
 recompute();
 if(_shared){
   map.setView([siteAdj.lat,siteAdj.lon],19);
-  if(SHARED_STRIPS && buildSharedBand()){
+  if(SHARED_SINGLE_SECTION){
+    // 単一断面（測線1本）の共有：2H影響帯は無いので、断面図の生成だけを行う（既存のgenerateSection()
+    // をそのまま呼ぶ。新しい断面生成ロジックは書かない）。POINTS.top/bottomはapplyShared()で復元済み。
+    setTimeout(async()=>{ await generateSection(); map.panTo([POINTS.top.lat,POINTS.top.lon]); },700);
+  } else if(SHARED_STRIPS && buildSharedBand()){
     // 計算済みの2Hラインをそのまま表示（再計算なし）→ 代表断面を選択
     selectRepresentative(); fitToBand();
   } else {
