@@ -942,13 +942,27 @@ function makeLabel(group, anchor, text, bg, draggable, tcolor){
   return m;
 }
 
+// 始点/終点のどちらかを「既に断面図が生成済みの状態で」動かした時、その断面に紐づく古い状態
+// （崖判定・2H影響帯）を全部リセットする。2026-08-21：腱さん指摘
+// 「始点か終点動かしたら全部リセットして、始点と終点だけ残す。だってやり直しになるじゃん絶対に」。
+// 原因：setPoint()はPOINTS[k]の座標を更新するだけで、SAMPLES/picks/autoDet等の断面図側の状態を
+// 一切クリアしていなかった＝ドラッグ後も古い崖上端・崖下端・2H到達点が地図・断面図に残っていた。
+function resetSectionState(){
+  SAMPLES=[]; picks=[]; autoDet=null; cliffMode='auto'; gapRatio=0; chartFullView=false;
+  document.getElementById('section').classList.add('hidden');
+  cliffLayer.clearLayers();
+  clearBand();   // 2H影響帯（BAND_STRIPS等）の状態も既存関数でまとめてクリア
+  updateCliffPointHint();
+}
 function setPoint(k,lat,lon,doFetch){
   const p=POINTS[k];
+  const hadSection = doFetch && p.placed && SAMPLES.length>=2;   // 動かす前から置かれていた点を、断面図生成後に動かした場合だけ対象
   p.lat=+(+lat).toFixed(7); p.lon=+(+lon).toFixed(7);
   document.getElementById(k+'_lat').value=p.lat;
   document.getElementById(k+'_lon').value=p.lon;
   document.getElementById(k+'_api').href=apiUrl(p.lat,p.lon);
   if(doFetch){
+    if(hadSection) resetSectionState();
     p.placed=true;   // クリック/ドラッグ/座標反映＝ユーザーが実際に置いた操作
     const other=(k==='top')?'bottom':'top';
     if(!POINTS[other].placed){   // もう片方がまだなら、次はそちらを置く番だと自動で案内を進める
