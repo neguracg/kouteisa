@@ -304,6 +304,7 @@
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
           <button class="small" onclick="clearFlat()">クリア</button>
           <button class="small" onclick="exportSitePlannerCSV()">📤 SitePlanner用にCSV出力</button>
+          <button class="small" id="cliffOverlayBtn" onclick="toggleCliffOverlayOnFlat()">🗻 2H影響ラインを重ねる</button>
           <span id="flatProg" class="muted" style="font-size:11px"></span>
         </div>
       </div>
@@ -838,13 +839,39 @@ function setTool(t){
     [flatLayer,flatRefLayer].forEach(l=>map.removeLayer(l));
     flatLegendControl.remove();
   }else{
-    [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer,pointPickLayer].forEach(l=>map.removeLayer(l));
+    // 2026-08-21：bandLayer（がけの2H影響ライン）だけは「平坦度タブで重ねて見る」トグルの対象なので、
+    // 他のがけ専用レイヤー（セル塗り分け・測線・確定線等）と違って無条件に外さない。cellLayerは
+    // 平坦度タブ自身が別の色分け（平ら/軽造成/要造成/超過）でセルを塗るため、がけ側の色分けと
+    // 重ねると混乱するのでこちらは対象外のまま常に外す（腱さん要望「2H影響ライン」＝線のことで、
+    // 色分けの重畳までは求めていない）。
+    [measureLayer,cliffLayer,cellLayer,selLayer,confirmedLayer,pointPickLayer].forEach(l=>map.removeLayer(l));
+    if(showCliffOnFlat) map.addLayer(bandLayer); else map.removeLayer(bandLayer);
     [flatLayer,flatRefLayer].forEach(l=>map.addLayer(l));
     document.getElementById('section').classList.add('hidden');
     flatLegendControl.addTo(map);
     updateFlatLegend();
   }
   try{ if(!VIEW) localStorage.setItem('kouteisa_tool', t); }catch(e){}   // 共有(閲覧)リンクではローカル保存の好みを上書きしない
+}
+// 平坦度タブで、がけタブの2H影響ライン(bandLayer)を重ねて表示するか。2026-08-21腱さん要望：
+// 「上の段で平坦度を計算した状態（水色・緑・地ならし・土工のエリア）の上に、崖の2Hラインも一緒に
+// 見たい。SitePlanner用にCSV出力の横にボタンを作って、いつでも押せば出せる状態にして」。
+// 平坦度タブに切り替わるたびにこのフラグを見てbandLayerの表示/非表示を決める（setTool()参照）。
+let showCliffOnFlat=false;
+function updateCliffOverlayBtnUI(){
+  const b=document.getElementById('cliffOverlayBtn');
+  if(!b) return;
+  b.classList.toggle('primary', showCliffOnFlat);
+  b.textContent = showCliffOnFlat ? '🗻 2H影響ラインを非表示' : '🗻 2H影響ラインを重ねる';
+}
+function toggleCliffOverlayOnFlat(){
+  if(!showCliffOnFlat && !BAND_STRIPS.some(s=>s.base||s.cyan)){
+    alert('先に「がけ」タブで「2H影響帯を生成」を実行してください。');
+    return;
+  }
+  showCliffOnFlat=!showCliffOnFlat;
+  if(TOOL==='flat'){ if(showCliffOnFlat) map.addLayer(bandLayer); else map.removeLayer(bandLayer); }
+  updateCliffOverlayBtnUI();
 }
 
 /* ====== モードボタン ====== */
@@ -2180,6 +2207,10 @@ function switchSite(id){
   updateDeExtentUI();
   updateSubAreaToggleUI();
   clearBand();      // 帯・セル・結果をリセット
+  // 2026-08-21：clearBand()はbandLayerの中身を空にするが、showCliffOnFlatトグル自体はONのまま
+  // 残ってしまう（見た目は空レイヤーなので実害はほぼ無いが、新物件でまだ2H影響帯を生成していないのに
+  // ボタンが「重ねて表示中」の見た目のままになるのは紛らわしい）。物件ごとの状態として明示的に戻す。
+  showCliffOnFlat=false; map.removeLayer(bandLayer); updateCliffOverlayBtnUI();
   clearFlat(false); // 平坦度グリッド・結果をリセット（FLAT_PLANESの物件別保存は下のloadFlatPlanes()に任せる）
   // 断面図の選択点(picks)・サンプル(SAMPLES)・確定済み崖線(confirmedCliffs)も物件ごとの状態。
   // clearBand()はこれらを触っておらず、POINTS同様に前物件のデータが残ったまま次の物件に持ち越されて
