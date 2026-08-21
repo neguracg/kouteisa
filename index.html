@@ -159,6 +159,8 @@
       <div class="sec-head">
         <b>断面図</b><span class="muted">始点(上側)→終点(下側)</span>
         <span id="secProg" class="muted"></span>
+        <button class="small primary edit-only" id="chartModeBtnPoint" onclick="setChartClickMode('point')">📍 ポイント指定</button>
+        <button class="small edit-only" id="chartModeBtnAngle" onclick="setChartClickMode('angle')">📐 2点間の角度を測定</button>
         <span class="muted edit-only">｜ 崖下端・上端は<b>自動判定</b>（クリックで手動補正可）</span>
         <button class="small edit-only" onclick="runAuto()">自動判定に戻す</button>
         <button class="small edit-only" onclick="clearPick()">選択クリア</button>
@@ -709,6 +711,7 @@ const selLayer        = L.layerGroup().addTo(map);
 const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
 const confirmedLayer= L.layerGroup().addTo(map);
+const pointPickLayer= L.layerGroup().addTo(map);   // 断面図チャートの「ポイント指定」モード専用（2026-08-21項目2）。cliffLayer等とは別レイヤーにし、resetSectionState()で消える対象を明示的に分ける
 const flatLayer      = L.layerGroup();   // 平坦度：セル塗り＋等高線（cliffモード開始のため既定では地図に追加しない）
 const flatRefLayer   = L.layerGroup();   // 平坦度：基準点マーカー
 const siteRefLayer   = L.layerGroup();   // 敷地調整：参照地番（周辺筆）。siteAdjustMode中だけ地図に追加
@@ -831,11 +834,11 @@ function setTool(t){
   document.querySelectorAll('.tool-cliff').forEach(el=>{ el.style.display = (t==='cliff') ? '' : 'none'; });
   document.querySelectorAll('.tool-flat').forEach(el=>{ el.style.display = (t==='flat') ? 'block' : 'none'; });
   if(t==='cliff'){
-    [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer].forEach(l=>map.addLayer(l));
+    [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer,pointPickLayer].forEach(l=>map.addLayer(l));
     [flatLayer,flatRefLayer].forEach(l=>map.removeLayer(l));
     flatLegendControl.remove();
   }else{
-    [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer].forEach(l=>map.removeLayer(l));
+    [measureLayer,cliffLayer,bandLayer,cellLayer,selLayer,confirmedLayer,pointPickLayer].forEach(l=>map.removeLayer(l));
     [flatLayer,flatRefLayer].forEach(l=>map.addLayer(l));
     document.getElementById('section').classList.add('hidden');
     flatLegendControl.addTo(map);
@@ -943,7 +946,7 @@ function makeLabel(group, anchor, text, bg, draggable, tcolor){
 }
 
 // 始点/終点のどちらかを「既に断面図が生成済みの状態で」動かした時、その断面に紐づく古い状態
-// （崖判定・2H影響帯）を全部リセットする。2026-08-21：腱さん指摘
+// （崖判定・2H影響帯・ポイント指定）を全部リセットする。2026-08-21：腱さん指摘
 // 「始点か終点動かしたら全部リセットして、始点と終点だけ残す。だってやり直しになるじゃん絶対に」。
 // 原因：setPoint()はPOINTS[k]の座標を更新するだけで、SAMPLES/picks/autoDet等の断面図側の状態を
 // 一切クリアしていなかった＝ドラッグ後も古い崖上端・崖下端・2H到達点が地図・断面図に残っていた。
@@ -952,6 +955,10 @@ function resetSectionState(){
   document.getElementById('section').classList.add('hidden');
   cliffLayer.clearLayers();
   clearBand();   // 2H影響帯（BAND_STRIPS等）の状態も既存関数でまとめてクリア
+  // ポイント指定（項目2）も古い断面のサンプルに紐づく値なので同時に無効化する。「モード切替の仕様4」
+  // により既定の'point'へ戻す（cliffModeを'auto'へ戻すのと同じ「断面が仕切り直しなら全トグルも既定へ」という扱い）。
+  pointPick=null; drawPointPickOnMap();
+  setChartClickMode('point');
   updateCliffPointHint();
 }
 function setPoint(k,lat,lon,doFetch){
@@ -2178,6 +2185,9 @@ function switchSite(id){
   // clearBand()はこれらを触っておらず、POINTS同様に前物件のデータが残ったまま次の物件に持ち越されて
   // いた（ヨコテン：同じ「switchSite()がリセットし忘れる」機構での別インスタンス。2026-08-17発見）。
   picks=[]; SAMPLES=[]; clearConfirmed();
+  // ポイント指定（項目2・2026-08-21）も物件ごとの状態。上と同じ「switchSite()がリセットし忘れる」
+  // 機構の再発を避けるため、新設時点からここでリセット対象に含めておく。
+  pointPick=null; drawPointPickOnMap(); setChartClickMode('point');
   if(!document.getElementById('section').classList.contains('hidden')){ drawChart(); updateReadout(); }
   flatRefLayer.clearLayers();
   flatRef=loadFlatRef();   // 新物件の基準点を復元（無ければnull）
@@ -4094,6 +4104,8 @@ let SAMPLES=[], picks=[], SCAL=null;
 let cliffMode='auto';   // 'auto' | 'manual'
 let autoDet=null;       // 直近の自動判定 {base, top, H}
 let gapRatio=0;         // DEM欠測率
+let chartClickMode='point';   // 断面図チャートの1クリックの意味。'point'(既定)=ポイント指定 | 'angle'=2点間の角度を測定（既存機能）2026-08-21項目2
+let pointPick=null;           // chartClickMode==='point'で選んだ1点 {dist,elev,lat,lon}。picks/cliffModeとは独立＝崖判定に一切影響しない
 function niceStep(x){const p=Math.pow(10,Math.floor(Math.log10(x||1)));const f=(x||1)/p;return (f<1.5?1:f<3.5?2:f<7.5?5:10)*p;}
 
 /* ====== 30度基準線による崖の自動判定 ====== */
@@ -4347,6 +4359,7 @@ function drawChart(){
     add('text',{x:X(s1.dist)-8,y:Y(s1.elev)-8,'text-anchor':'end',fill:'#8fa3b8','font-size':'11'},`終点(標高${fullEndElev.toFixed(1)}m)まで${(fullHi-s1.dist).toFixed(0)}m→`);
   }
   drawPicks();
+  drawPointPick();
 }
 // 敷地重心を現在の断面線に射影したdist（崖下端から見た敷地の向き判定に使う）
 function siteDistOnLine(){
@@ -4460,6 +4473,38 @@ function drawPicks(){
   }
 }
 
+/* ====== ポイント指定（チャート1クリック→平面図に同色マーカー。2026-08-21項目2） ======
+   既存の「2点間の角度を測定」（picks/cliffMode）とは完全に独立。色は崖上端(COL.top)・崖下端
+   (COL.bottom)・2Hライン(#ff3b6b)と被らない#ffd166を使用（平坦度タブの基準点マーカーで
+   既に使われている色と統一）。 */
+function drawPointPick(){
+  if(!SCAL) return;
+  const svg=document.getElementById('chart');
+  svg.querySelectorAll('.ppick').forEach(e=>e.remove());
+  if(!pointPick) return;
+  const NS='http://www.w3.org/2000/svg';
+  const add=(tag,a,txt)=>{const el=document.createElementNS(NS,tag);el.setAttribute('class','ppick');for(const k in a)el.setAttribute(k,a[k]);if(txt!=null)el.textContent=txt;svg.appendChild(el);return el;};
+  const x=SCAL.X(pointPick.dist),y=SCAL.Y(pointPick.elev);
+  add('line',{x1:x,y1:SCAL.mt,x2:x,y2:SCAL.H-SCAL.mb,stroke:'#ffd166','stroke-width':1.5,'stroke-dasharray':'4,3'});
+  add('circle',{cx:x,cy:y,r:5,fill:'#ffd166',stroke:'#fff','stroke-width':1.5});
+  add('text',{x:x,y:y-9,'text-anchor':'middle',fill:'#ffd166','font-weight':'bold'},`📍 ${pointPick.elev.toFixed(1)}m`);
+}
+function drawPointPickOnMap(){
+  pointPickLayer.clearLayers();
+  if(!pointPick) return;
+  makeDot(pointPickLayer,[pointPick.lat,pointPick.lon],'#ffd166',false);
+  makeLabel(pointPickLayer,L.latLng(pointPick.lat,pointPick.lon),`📍 標高${pointPick.elev.toFixed(1)}m`,'#ffd166',true);
+}
+// チャートの2ボタン（📍ポイント指定／📐2点間の角度を測定）の切替。setTool()のtabCliff/tabFlatと
+// 同じ「primaryクラスの付け外し」パターン。既存の選択状態(picks/pointPick)はここでは触らない＝
+// 切替だけで角度測定の結果(drawCliff()のマーカー)やポイント指定の結果を消さない（両方が独立して
+// 見え続ける。地図・断面図とも混同しないよう別レイヤー/別SVGクラスにしてあるので競合しない）。
+function setChartClickMode(m){
+  chartClickMode=m;
+  document.getElementById('chartModeBtnPoint').classList.toggle('primary', m==='point');
+  document.getElementById('chartModeBtnAngle').classList.toggle('primary', m==='angle');
+}
+
 // 測線全体（SAMPLES先頭→末尾）の平均勾配。SAMPLES<2なら省略。
 function overallSlopeLine(){
   if(SAMPLES.length<2) return '';
@@ -4495,6 +4540,13 @@ document.getElementById('chart').addEventListener('click',ev=>{
   const d=SCAL.xLo+(u.x-SCAL.ml)/(SCAL.W-SCAL.ml-SCAL.mr)*(SCAL.xHi-SCAL.xLo);
   let near=SAMPLES[0],md=Infinity;
   SAMPLES.forEach(p=>{const dd=Math.abs(p.dist-d);if(dd<md){md=dd;near=p;}});
+  if(chartClickMode==='point'){
+    // 新設「ポイント指定」モード（2026-08-21項目2・既定）：picks/cliffModeには一切触れない＝既存の崖判定に影響させない
+    pointPick=sampleToPick(near);
+    drawPointPick(); drawPointPickOnMap();
+    return;
+  }
+  // 'angle'＝既存の「2点間の角度を測定」モード。以下は無変更（1行も変更しないこと＝無回帰必須）
   if(picks.length>=2) picks=[];
   picks.push({dist:near.dist,elev:near.elev,lat:near.lat,lon:near.lon});
   cliffMode='manual';
