@@ -249,6 +249,8 @@
       <div style="margin-top:8px"><button class="primary" style="width:100%" onclick="generateBand()">2H影響帯を生成</button></div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
         <button class="small" onclick="shareURL()">共有URLを発行</button>
+        <button class="small" onclick="exportCliffBandCSV()">📤 SitePlanner用にCSV出力</button>
+        <button class="small" onclick="exportCliffBandImage()">🖼️ 2H影響帯を画像で保存</button>
         <button class="small" onclick="clearBand()">帯を消去・測線からやり直す</button>
         <span id="bandProg" class="muted" style="font-size:11px"></span>
       </div>
@@ -1530,6 +1532,94 @@ dataset,seq,x,y
   const a=document.createElement('a');
   a.href=url;
   a.download=`kouteisa_${CURRENT_SITE}_siteplanner_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+// がけ2H影響帯の頂点データを「敷地重心を原点とするローカル直交座標(e=東,n=北,メートル,真北基準)」で
+// まとめて返す。exportCliffBandCSV()とexportCliffBandImage()の両方がこれを使う（同じ形状を2箇所で
+// 別々に計算すると数値がズレるリスクがあるため、位置計算はここ1箇所に集約する）。
+// 原点(cLat/cLon)はgenerateBand()と同じ式（siteLatLngsの平均）で毎回計算し直す。既存の
+// exportSitePlannerCSV()が使うFLAT_GRID.cLat/cLonとは別の計算経路だが、どちらも「敷地重心」の
+// 同じ式なので数値的にほぼ一致する（SitePlanner側で両CSVを重ねてもずれない）。
+// red/cyanの頂点列は、drawCellsAndAreas()内のencRed/encCyanと全く同じ式（フィルタ→base→reach逆順で
+// 閉じたポリゴンにする）で作る＝地図に描かれている帯と寸分違わない形状になる。
+function cliffBandGeometry(){
+  const cLat=siteLatLngs.reduce((s,p)=>s+p.lat,0)/siteLatLngs.length;
+  const cLon=siteLatLngs.reduce((s,p)=>s+p.lon,0)/siteLatLngs.length;
+  const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+  const toEN=(lat,lon)=>({e:(lon-cLon)*mLon, n:(lat-cLat)*mLat});
+  const site=siteLatLngs.map(ll=>toEN(ll.lat,ll.lon));
+  const de=deSubAreaPolys().map(s=>({key:s.key, pts:s.latlngs.map(ll=>toEN(ll.lat,ll.lon))}));
+  const redOK=BAND_STRIPS.filter(s=>s.base);
+  const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
+  const red = redOK.length>=2
+    ? redOK.map(s=>toEN(s.base.lat,s.base.lon)).concat(redOK.map(s=>toEN(s.reach.lat,s.reach.lon)).reverse())
+    : null;
+  const cyan = cyanOK.length>=2
+    ? cyanOK.map(s=>toEN(s.cyan.base.lat,s.cyan.base.lon)).concat(cyanOK.map(s=>toEN(s.cyan.reach.lat,s.cyan.reach.lon)).reverse())
+    : null;
+  return {cLat,cLon,site,de,red,cyan};
+}
+// がけタブの2H影響帯を、SitePlanner（別プロジェクト）へそのままチャット添付できる自己文書化CSVとして
+// 書き出す。既存のexportSitePlannerCSV()（平坦度タブ用）と同じ考え方・同じ座標系・同じダウンロード
+// 処理だが、着手前4問の回答どおり既存関数には一切手を加えず、完全に独立した新関数として作る
+// （がけタブと平坦度タブは別々に使われるため、CSVを1本に混ぜると片方しか使わないユーザーにも
+// 常に両方のデータが付いてきて肥大化する。2026-08-21）。
+function exportCliffBandCSV(){
+  if(!BAND_STRIPS.length){ alert('先に「2H影響帯を生成」を実行してください。'); return; }
+  const geo=cliffBandGeometry();
+  const rowsOut=[];
+  geo.site.forEach((p,i)=>{ rowsOut.push(['site_outline', i, p.e.toFixed(3), p.n.toFixed(3)]); });
+  // D/E（隣接2筆）の外周。既存exportSitePlannerCSV()のde_outline_*と同じパターン（重複実装は
+  // ここでは気にしない＝CSVの中身が独立して完結していることの方が重要）。D/Eを持たない物件は
+  // deSubAreaPolys()が空配列を返すため無害（出力なし）。
+  geo.de.forEach(s=>{
+    s.pts.forEach((p,i)=>{ rowsOut.push([`de_outline_${s.key}`, i, p.e.toFixed(3), p.n.toFixed(3)]); });
+  });
+  if(geo.red)  geo.red.forEach((p,i)=>{  rowsOut.push(['cliff2h_red',  i, p.e.toFixed(3), p.n.toFixed(3)]); });
+  if(geo.cyan) geo.cyan.forEach((p,i)=>{ rowsOut.push(['cliff2h_cyan', i, p.e.toFixed(3), p.n.toFixed(3)]); });
+  const header=
+`# ${SITE.name} 2H影響帯 エクスポート（がけ条例確認ツール 52_kouteisa より）
+# 生成日時: ${new Date().toISOString()}
+#
+# 【このファイルの目的】
+# SitePlannerプロジェクトで、この敷地の外周と「がけ条例の2H影響帯（要対策範囲）」の輪郭を、
+# 同じ位置関係で1つの背景に重ねて描画するための元データです。
+#
+# 【座標系】ローカル直交座標（単位=メートル、真北基準、回転なし）。x=東方向が正、y=北方向が正。
+# 原点は敷地重心付近の実際の緯度経度（lat=${geo.cLat.toFixed(7)}, lon=${geo.cLon.toFixed(7)}）。
+# SitePlanner側でこの(x,y)をそのまま平面座標としてメートル単位でプロットしてください。
+# 縮尺・回転の変換は不要です（1データ単位=現実の1メートル、真上が北）。
+# ※ 平坦度タブから出力するCSV（ファイル名に"siteplanner"を含む方）とは原点の計算経路が別ですが、
+#   どちらも「敷地重心」の同じ式で求めているため数値的にほぼ一致し、SitePlanner側で2つのCSVを
+#   両方読み込んで重ねても位置はずれません。
+#
+# 【データの読み方】
+# 1列目 dataset: どの図形に属するかを示す名前。
+#   site_outline  = 敷地(ABC)の外周（位置・角度・倍率を調整した最終配置）
+#   de_outline_D, de_outline_E = 隣接筆D(1170-1)・E(1404-4)それぞれの外周。この物件がD/Eを
+#     持たない場合は出力されません。
+#   cliff2h_red  = 崖上（がけの下端から敷地側）の2H影響帯の輪郭。ここから2H以内は要対策範囲です。
+#     崖上側の崖を検出できていない場合は出力されません。
+#   cliff2h_cyan = 崖下（がけの上端から敷地側）の2H影響帯の輪郭。同上（要対策範囲）。崖下側の崖を
+#     検出できていない場合は出力されません。
+# 2列目 seq: 同じdataset内での点の順番（0始まり）。
+# 3列目 x, 4列目 y: 上記座標系での位置（メートル）。
+#
+# 【描画方法】各datasetは閉じたポリゴン（輪郭線）です。同じdataset名の行をseq昇順に直線でつなぎ、
+# 最後の点から最初の点へ戻して閉じてください。
+#
+# 【免責】この2H影響帯は国土地理院DEMからの概算です。正式判断には現地測量・崖上端下端の実測・
+# 行政協議が必要です。
+#
+dataset,seq,x,y
+`;
+  const csv = header + rowsOut.map(r=>r.join(',')).join('\n') + '\n';
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`kouteisa_${CURRENT_SITE}_cliffband_${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
 }
