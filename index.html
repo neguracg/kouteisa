@@ -936,6 +936,33 @@ function haversine(a,b){
   const s=Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(s));
 }
+/* ====== 2H影響帯のリボンを「地理的に連続したまとまり」ごとに分割する（2026-08-21） ======
+   帯は1m刻みの断面(strip)ごとに崖を検出し、検出できた断面の崖ヘリ点(base)を順につないだ線と
+   2H到達点(reach)を逆順につないだ線でリボン状のポリゴンを作る。ところが「検出できた断面」を
+   単純にfilterで抜き出すと、間に挟まっていた未検出の断面の情報が失われ、**遠く離れた孤立検出**
+   （敷地の反対側で1本だけ拾ってしまった断面など）まで1本のリボンに繋がれてしまう。結果として
+   敷地を横切る細長い三角形の「スパイク」が描かれ、しかもその面積が「影響内」として集計される
+   （腱さん報告「またA区画のほうに変なスパイク出てる」。実データで73m・25m離れた孤立検出2本が
+   本体の連続32本に繋がっていたことを確認）。
+   連続する検出点の距離がBAND_RUN_GAP_Mを超えたらそこでリボンを切り、2本未満のまとまり
+   （＝ポリゴンを作れない孤立検出）は捨てる。距離で判定するので、生成直後のBAND_STRIPSでも
+   共有URLから復元したBAND_STRIPS（断面の連番情報を持たない）でも同じように効く。 */
+const BAND_RUN_GAP_M=5;   // 断面は1m間隔なので、5m＝最大4本の未検出を橋渡しする。実データの正常な間隔は0.9〜3.0m
+function bandRuns(items){
+  // items: [{base:{lat,lon}, reach:{lat,lon}}]（検出済みのみ・生成順）→ [[item,...], ...]
+  const runs=[]; let cur=[];
+  for(let i=0;i<items.length;i++){
+    if(cur.length && haversine(cur[cur.length-1].base, items[i].base) > BAND_RUN_GAP_M){ runs.push(cur); cur=[]; }
+    cur.push(items[i]);
+  }
+  if(cur.length) runs.push(cur);
+  return runs.filter(r=>r.length>=2);
+}
+// BAND_STRIPSから赤(崖上)/シアン(崖下)それぞれの検出済みリストを、bandRuns()が食える形で取り出す
+function bandItemsRed(){ return BAND_STRIPS.filter(s=>s.base).map(s=>({base:s.base, reach:s.reach})); }
+function bandItemsCyan(){ return BAND_STRIPS.filter(s=>s.cyan).map(s=>({base:s.cyan.base, reach:s.cyan.reach})); }
+// 1つのまとまり(run)を閉じたポリゴンの頂点列にする。conv=各点を出力形式へ変換する関数
+function runToPolygon(run, conv){ return run.map(x=>conv(x.base)).concat(run.map(x=>conv(x.reach)).reverse()); }
 function bearingRad(a,b){
   const f1=rad(a.lat),f2=rad(b.lat),dl=rad(b.lon-a.lon);
   const y=Math.sin(dl)*Math.cos(f2);
@@ -1602,14 +1629,10 @@ function cliffBandGeometry(){
   const toEN=(lat,lon)=>({e:(lon-cLon)*mLon, n:(lat-cLat)*mLat});
   const site=siteLatLngs.map(ll=>toEN(ll.lat,ll.lon));
   const de=deSubAreaPolys().map(s=>({key:s.key, pts:s.latlngs.map(ll=>toEN(ll.lat,ll.lon))}));
-  const redOK=BAND_STRIPS.filter(s=>s.base);
-  const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
-  const red = redOK.length>=2
-    ? redOK.map(s=>toEN(s.base.lat,s.base.lon)).concat(redOK.map(s=>toEN(s.reach.lat,s.reach.lon)).reverse())
-    : null;
-  const cyan = cyanOK.length>=2
-    ? cyanOK.map(s=>toEN(s.cyan.base.lat,s.cyan.base.lon)).concat(cyanOK.map(s=>toEN(s.cyan.reach.lat,s.cyan.reach.lon)).reverse())
-    : null;
+  // 2026-08-21：red/cyanは「地理的に連続したまとまり」ごとの複数ポリゴン配列（bandRuns()参照）。
+  // 空配列＝該当なし（旧nullと同じ意味）。呼び出し側はgeo.red.length>0で有無を判定すること。
+  const red = bandRuns(bandItemsRed()).map(run=>runToPolygon(run, p=>toEN(p.lat,p.lon)));
+  const cyan = bandRuns(bandItemsCyan()).map(run=>runToPolygon(run, p=>toEN(p.lat,p.lon)));
   return {cLat,cLon,site,de,red,cyan};
 }
 // がけタブの2H影響帯を、SitePlanner（別プロジェクト）へそのままチャット添付できる自己文書化CSVとして
@@ -1628,8 +1651,8 @@ function exportCliffBandCSV(){
   geo.de.forEach(s=>{
     s.pts.forEach((p,i)=>{ rowsOut.push([`de_outline_${s.key}`, i, p.e.toFixed(3), p.n.toFixed(3)]); });
   });
-  if(geo.red)  geo.red.forEach((p,i)=>{  rowsOut.push(['cliff2h_red',  i, p.e.toFixed(3), p.n.toFixed(3)]); });
-  if(geo.cyan) geo.cyan.forEach((p,i)=>{ rowsOut.push(['cliff2h_cyan', i, p.e.toFixed(3), p.n.toFixed(3)]); });
+  geo.red.forEach((poly,ri)=>{  poly.forEach((p,i)=>{ rowsOut.push([`cliff2h_red_${ri+1}`,  i, p.e.toFixed(3), p.n.toFixed(3)]); }); });
+  geo.cyan.forEach((poly,ri)=>{ poly.forEach((p,i)=>{ rowsOut.push([`cliff2h_cyan_${ri+1}`, i, p.e.toFixed(3), p.n.toFixed(3)]); }); });
   const header=
 `# ${SITE.name} 2H影響帯 エクスポート（がけ条例確認ツール 52_kouteisa より）
 # 生成日時: ${new Date().toISOString()}
@@ -1651,10 +1674,12 @@ function exportCliffBandCSV(){
 #   site_outline  = 敷地(ABC)の外周（位置・角度・倍率を調整した最終配置）
 #   de_outline_D, de_outline_E = 隣接筆D(1170-1)・E(1404-4)それぞれの外周。この物件がD/Eを
 #     持たない場合は出力されません。
-#   cliff2h_red  = 崖上（がけの下端から敷地側）の2H影響帯の輪郭。ここから2H以内は要対策範囲です。
-#     崖上側の崖を検出できていない場合は出力されません。
-#   cliff2h_cyan = 崖下（がけの上端から敷地側）の2H影響帯の輪郭。同上（要対策範囲）。崖下側の崖を
-#     検出できていない場合は出力されません。
+#   cliff2h_red_1, cliff2h_red_2,... = 崖上（がけの下端から敷地側）の2H影響帯の輪郭。ここから2H
+#     以内は要対策範囲です。地理的に離れた検出（例: 敷地の別の場所で単独検出された崖）は同じ
+#     輪郭に繋げず、_1,_2,...の連番で別系列に分かれます。崖上側の崖を検出できていない場合は
+#     出力されません。
+#   cliff2h_cyan_1, cliff2h_cyan_2,... = 崖下（がけの上端から敷地側）の2H影響帯の輪郭。同上
+#     （要対策範囲・連番の考え方も同じ）。崖下側の崖を検出できていない場合は出力されません。
 # 2列目 seq: 同じdataset内での点の順番（0始まり）。
 # 3列目 x, 4列目 y: 上記座標系での位置（メートル）。
 #
@@ -1714,11 +1739,11 @@ function wrapTextJP(text, widthPx, fontSize){
 function buildCliffBandCanvas(){
   return new Promise((resolve,reject)=>{
     const geo=cliffBandGeometry();
-    const allPts=geo.site.concat(...geo.de.map(d=>d.pts), geo.red||[], geo.cyan||[]);
+    const allPts=geo.site.concat(...geo.de.map(d=>d.pts), ...geo.red, ...geo.cyan);
     if(!allPts.length){ reject(new Error('描画する図形がありません')); return; }
-    // drawCellsAndAreas()と同じ出し分け条件（encCyanの有無=cyanOK>=2）をそのまま流用。
+    // drawCellsAndAreas()と同じ出し分け条件（cyanOKの有無）をそのまま流用。
     // 崖上/崖下の呼び分けはredの有無ではなくcyanの有無で決まる（bandResultの実際の文言と揃える）。
-    const dual=!!geo.cyan;
+    const dual=geo.cyan.length>0;
     const NS='http://www.w3.org/2000/svg';
     const svg=document.createElementNS(NS,'svg');
     svg.setAttribute('xmlns',NS);
@@ -1757,8 +1782,8 @@ function buildCliffBandCanvas(){
     geo.de.forEach(d=>{
       add('polygon',{points:polyPts(d.pts), fill:'none', stroke:'#7c3aed','stroke-width':2,'stroke-dasharray':'6,4','stroke-linejoin':'round'});
     });
-    if(geo.red)  add('polygon',{points:polyPts(geo.red),  fill:'rgba(255,59,107,0.32)', stroke:'#ff3b6b','stroke-width':2.5,'stroke-linejoin':'round'});
-    if(geo.cyan) add('polygon',{points:polyPts(geo.cyan), fill:'rgba(0,179,255,0.32)',  stroke:'#00b3ff','stroke-width':2.5,'stroke-linejoin':'round'});
+    geo.red.forEach(poly=> add('polygon',{points:polyPts(poly),  fill:'rgba(255,59,107,0.32)', stroke:'#ff3b6b','stroke-width':2.5,'stroke-linejoin':'round'}));
+    geo.cyan.forEach(poly=>add('polygon',{points:polyPts(poly), fill:'rgba(0,179,255,0.32)',  stroke:'#00b3ff','stroke-width':2.5,'stroke-linejoin':'round'}));
 
     // 方位記号（ローカル座標は真北基準なので、単純な上向き矢印でよい＝指示書のとおり）
     const naX=W-MX-28, naY=MT+40;
@@ -1779,8 +1804,8 @@ function buildCliffBandCanvas(){
     // 凡例（色の意味：使用可能／崖上2H影響／崖下2H影響／(D/E外周)。2列に並べ、テキスト幅の実測なしで
     // レイアウトが崩れないようにする）
     const legendItems=[{color:'#19c37d', label:'使用可能（2H影響の外）'}];
-    if(geo.red)  legendItems.push({color:'#ff3b6b', label: dual?'崖上（赤）2H影響（要対策）':'2H影響内（要対策範囲）'});
-    if(geo.cyan) legendItems.push({color:'#00b3ff', label:'崖下（シアン）2H影響（要対策）'});
+    if(geo.red.length)  legendItems.push({color:'#ff3b6b', label: dual?'崖上（赤）2H影響（要対策）':'2H影響内（要対策範囲）'});
+    if(geo.cyan.length) legendItems.push({color:'#00b3ff', label:'崖下（シアン）2H影響（要対策）'});
     if(geo.de.length) legendItems.push({color:'#7c3aed', label:'隣接筆(D/E)外周', dashed:true});
     let cursorY=MT+plotH+30;
     const col2X=MX+plotW/2;
@@ -2464,9 +2489,11 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
   const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
   const el=document.getElementById('bandResult'); el.style.display='block';
   if(redOK.length<2 && cyanOK.length<2){ el.innerHTML='崖を検出できた帯が不足。敷地の配置や測線の“向き”を確認してください。'; return; }
-  // 影響帯ポリゴン（崖ヘリライン→2H影響ライン）。これに対する内外で判定＝描画と一致
-  const encRed = redOK.length>=2 ? redOK.map(s=>({lat:s.base.lat,lon:s.base.lon})).concat(redOK.map(s=>({lat:s.reach.lat,lon:s.reach.lon})).reverse()) : null;
-  const encCyan= cyanOK.length>=2 ? cyanOK.map(s=>({lat:s.cyan.base.lat,lon:s.cyan.base.lon})).concat(cyanOK.map(s=>({lat:s.cyan.reach.lat,lon:s.cyan.reach.lon})).reverse()) : null;
+  // 影響帯ポリゴン（崖ヘリライン→2H影響ライン）。これに対する内外で判定＝描画と一致。
+  // 2026-08-21：地理的に連続したまとまりごとに複数ポリゴンへ分割する（bandRuns()参照。単純に
+  // redOK/cyanOK全体を1本のリボンにすると、離れた場所の孤立検出まで繋いだ「スパイク」ができる）。
+  const encRedList = bandRuns(bandItemsRed()).map(run=>runToPolygon(run, p=>p));
+  const encCyanList = bandRuns(bandItemsCyan()).map(run=>runToPolygon(run, p=>p));
   // 2026-08-21（項目2）：D/E（隣接2筆）もセルの走査・採否判定に含める。drawCutFillOutlines()と同じ
   // 「pointInPoly()（ABC） || D/EのいずれかのpointInPoly()」のOR判定パターンを流用（D/Eを持たない
   // 物件はdeSubAreaPolys()が空配列を返すため、pointInPoly(sEN)単体と同じ結果になり無害）。
@@ -2481,8 +2508,8 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
     if(!pointInPoly(e+0.5,n+0.5,sEN) && !desEN.some(d=>pointInPoly(e+0.5,n+0.5,d.en))) continue;
     total++;
     const c=toLL(e+0.5,n+0.5);
-    const inRed = !!(encRed && pointInLLPoly(c.lat,c.lon,encRed));
-    const inCyan= !!(encCyan && pointInLLPoly(c.lat,c.lon,encCyan));
+    const inRed = encRedList.some(poly=>pointInLLPoly(c.lat,c.lon,poly));
+    const inCyan= encCyanList.some(poly=>pointInLLPoly(c.lat,c.lon,poly));
     let col;
     if(inRed&&inCyan){col='#a05cff';both++;}
     else if(inRed){col='#ff3b6b';redA++;}
@@ -2497,12 +2524,12 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
   const deArea=des.reduce((s,d)=>s+polygonArea(d.latlngs),0);
   const deLbl = deArea ? `<br><span style="color:#c9a3ff">DE 約${f(deArea)}㎡</span>（別地・敷地面積には含まれない）` : '';
   const deNote = deArea ? `／判定はABC＋隣接筆(D/E)を合わせた範囲で実施` : '';
-  if(encCyan){   // 両崖モード：4分類表示
+  if(encCyanList.length){   // 両崖モード：4分類表示
     L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
       html:`<div class="arealbl">敷地 ${f(area)}㎡${deArea?`／DE ${f(deArea)}㎡`:''}<br><span class="g">使用可 ${f(usable)}㎡</span><br><span style="color:#ff6b8a">崖上 ${f(redA)}</span> / <span style="color:#38bdf8">崖下 ${f(cyanA)}</span> / <span style="color:#c9a3ff">両 ${f(both)}</span> ㎡</div>`})}).addTo(bandLayer);
     el.innerHTML=`<b>敷地 約${f(area)}㎡</b>${deLbl}（格子1m概算）<br>■ 使用可能（両方の2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 崖上（赤）の影響のみ：約${f(redA)}㎡<br>■ 崖下（シアン）の影響のみ：約${f(cyanA)}㎡<br>■ 両方の影響（紫）：約${f(both)}㎡<br>■ 要対策 合計（使用可以外）：<b>約${f(total-usable)}㎡</b><br><span class="src">緑=使用可／赤=崖上2H内／シアン=崖下2H内／紫=両方。太線＝各2H影響ライン。薄い灰線=各断面（クリック/←→で切替）${deNote}。正式判断は実測断面図・設計者・行政協議。</span>`;
   } else {       // 単崖モード：従来表示（函南など）
-    const enclosed=encRed?polygonArea(encRed):0;
+    const enclosed=encRedList.reduce((s,p)=>s+polygonArea(p),0);
     L.marker([cLat,cLon],{interactive:false,icon:L.divIcon({className:'',iconSize:null,iconAnchor:[0,0],
       html:`<div class="arealbl">敷地 ${f(area)}㎡${deArea?`／DE ${f(deArea)}㎡`:''}<br><span class="g">使用可 ${f(usable)}㎡</span> / <span class="r">影響内 ${f(total-usable)}㎡</span></div>`})}).addTo(bandLayer);
     el.innerHTML=`<b>敷地 約${f(area)}㎡</b>${deLbl}（格子1m概算）<br>■ 使用可能（2H影響の外）：<b>約${f(usable)}㎡</b><br>■ 2H影響内（要対策面積）：<b>約${f(total-usable)}㎡</b><br>■ がけ対策対象面積（2Hライン囲み）：約${f(enclosed)}㎡<br><span class="src">緑=使用可/赤=影響内。赤線=2H影響ライン。薄い灰線=各断面（クリック/←→で切替）${deNote}。正式判断は実測断面図・設計者・行政協議。</span>`;
@@ -2532,21 +2559,24 @@ function drawBand(){
   // 2026-08-21：単崖モードでも両側検出（赤＋シアン）が出るようになったため、
   // 文言の出し分けはSITE.twoSidedではなく「実際に両方検出されたか」で行う
   const dual = redOK.length>=2 && BAND_STRIPS.filter(s=>s.cyan).length>=2;
-  if(redOK.length>=2){
-    const baseLine=redOK.map(s=>[s.base.lat,s.base.lon]);
-    const reachLine=redOK.map(s=>[s.reach.lat,s.reach.lon]);
+  // 2026-08-21：赤runsごとに個別描画する（bandRuns()参照）。単純にredOK全体を1本のリボンにすると、
+  // 地理的に離れた孤立検出（未検出の断面を挟んで数十m離れた場所で単発検出した崖など）まで
+  // 直線で繋いでしまい、敷地を横切る「スパイク」になっていた（腱さん報告「またA区画のほうに
+  // 変なスパイク出てる」）。runが2本未満（孤立1点）のものはbandRuns()側で自動的に除外される。
+  bandRuns(bandItemsRed()).forEach(run=>{
+    const baseLine=run.map(x=>[x.base.lat,x.base.lon]);
+    const reachLine=run.map(x=>[x.reach.lat,x.reach.lon]);
     L.polygon(baseLine.concat(reachLine.slice().reverse()),{stroke:false,fillColor:'#ff3b6b',fillOpacity:.14,interactive:false}).addTo(bandLayer);
     L.polyline(baseLine,{color:'#ffb020',weight:2,interactive:false}).addTo(bandLayer).bindTooltip(dual?'崖上側 崖ヘリライン':'崖下端ライン',{sticky:true});
     L.polyline(reachLine,{color:'#ff3b6b',weight:4,interactive:false}).addTo(bandLayer).bindTooltip(dual?'崖上側 2H影響ライン（赤）':'2H影響ライン',{sticky:true});
-  }
-  const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
-  if(cyanOK.length>=2){
-    const baseLine=cyanOK.map(s=>[s.cyan.base.lat,s.cyan.base.lon]);
-    const reachLine=cyanOK.map(s=>[s.cyan.reach.lat,s.cyan.reach.lon]);
+  });
+  bandRuns(bandItemsCyan()).forEach(run=>{
+    const baseLine=run.map(x=>[x.base.lat,x.base.lon]);
+    const reachLine=run.map(x=>[x.reach.lat,x.reach.lon]);
     L.polygon(baseLine.concat(reachLine.slice().reverse()),{stroke:false,fillColor:'#00b3ff',fillOpacity:.14,interactive:false}).addTo(bandLayer);
     L.polyline(baseLine,{color:'#8fd6ff',weight:2,interactive:false}).addTo(bandLayer).bindTooltip('崖下側 崖ヘリライン',{sticky:true});
     L.polyline(reachLine,{color:'#00b3ff',weight:4,interactive:false}).addTo(bandLayer).bindTooltip('崖下側 2H影響ライン（シアン）',{sticky:true});
-  }
+  });
 }
 function addSel(p,txt,color){
   L.marker([p.lat,p.lon],{icon:L.divIcon({html:`<div style="width:13px;height:13px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 4px #000"></div>`,className:'dot-icon',iconSize:[13,13],iconAnchor:[6,6]}),zIndexOffset:1500}).addTo(selLayer)
