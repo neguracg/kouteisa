@@ -248,6 +248,12 @@
     <div class="card edit-only tool-cliff">
       <h2>4. 2H影響帯（敷地の使用可否）<span class="badge">最終成果</span></h2>
       <div class="hint" style="margin-top:0">測線を崖に<b>直交</b>させて配置 → 敷地を崖面に投影し、幅1mごとに各断面の2H到達点を計算して <b>2H影響ライン</b> を描画（点数が多く時間がかかります）。</div>
+      <div class="hint" style="margin-top:0">道路など基準となる線を地図で2点指定すると、それに<b>直交</b>する向きで2H影響帯を生成します（未指定なら従来通り「1. 測線の点」の向きを使用）。</div>
+      <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+        <button class="small" id="refLineBtn" onclick="toggleRefLineMode()">基準線を地図で指定</button>
+        <button class="small" id="refLineClearBtn" onclick="clearRefLine()" style="display:none">基準線を消去</button>
+        <span id="refLineReadout" class="muted" style="font-size:11px"></span>
+      </div>
       <div style="margin-top:8px"><button class="primary" style="width:100%" onclick="generateBand()">2H影響帯を生成</button></div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
         <button class="small" onclick="shareURL()">共有URLを発行</button>
@@ -754,6 +760,7 @@ function updateFlatLegend(){ if(flatLegendDiv) flatLegendDiv.innerHTML=flatLegen
 
 map.on('click', e => {
   if(measureActive){ handleMeasureClick(e.latlng); return; }   // 距離計測モード中は既存のクリック動作(測線配置・平坦度基準点)を抑止
+  if(refLineMode){ handleRefLineClick(e.latlng); return; }   // 2026-08-22：基準線（道路沿い）の武装中は他の全クリック動作を抑止
   if(cdeAnchorMode){ setCdeAnchor(e.latlng); return; }   // 2026-08-20：「高い面」目印点の指定モード中は他の全クリック動作を抑止
   if(VIEW||siteAdjustMode) return;
   if(TOOL==='flat'){ setFlatRef(e.latlng); return; }
@@ -2254,6 +2261,7 @@ function switchSite(id){
   flatRef=loadFlatRef();   // 新物件の基準点を復元（無ければnull）
   drawFlatRef();
   loadFlatPlanes(); updatePlanesUI();   // 2つの基準面（低い面/高い面）も物件別に復元
+  REF_LINE=loadRefLine(); refLinePts=[]; refLineMode=false; drawRefLine(); updateRefLineUI();   // 基準線（道路沿い）も物件別に復元。switchSite()はリセット忘れの常習箇所（DESIGN.md §9）
   drawSite();
   map.setView([siteAdj.lat,siteAdj.lon], map.getZoom());
   populateSiteSel();
@@ -2319,8 +2327,9 @@ function showLoading(msg){const l=document.getElementById('loading');document.ge
 function hideLoading(){document.getElementById('loading').classList.remove('on');}
 async function generateBand(){
   if(siteLatLngs.length<3){alert('先に敷地を配置してください。');return;}
-  const A=POINTS.top, B=POINTS.bottom;            // 測線は「向き」だけ使用（位置は無視）
-  if(haversine(A,B)<3){alert('測線が短すぎます。崖を横断する“向き”に測線を置いてください（位置は敷地基準で無視します）。');return;}
+  const useRefLine = !!(REF_LINE.a && REF_LINE.b);   // 基準線が指定済みならそちらを優先（2026-08-22追加）
+  const A=POINTS.top, B=POINTS.bottom;            // 測線は「向き」だけ使用（位置は無視）。基準線が無い時のフォールバック
+  if(!useRefLine && haversine(A,B)<3){alert('測線が短すぎます。崖を横断する“向き”に測線を置いてください（位置は敷地基準で無視します）。');return;}
   const mul=parseFloat(document.getElementById('pMul').value)||2;
   let step=Math.max(0.5,parseFloat(document.getElementById('pStep').value)||0.5);
   const cLat=siteLatLngs.reduce((s,p)=>s+p.lat,0)/siteLatLngs.length;
@@ -2328,8 +2337,20 @@ async function generateBand(){
   const ref={lat:cLat,lon:cLon}, mLat=111320, mLon=111320*Math.cos(rad(cLat));
   const toEN=p=>({e:(p.lon-ref.lon)*mLon, n:(p.lat-ref.lat)*mLat});
   const toLL=(e,n)=>({lat:ref.lat+n/mLat, lon:ref.lon+e/mLon});
-  const Aen=toEN(A),Ben=toEN(B); let De=Ben.e-Aen.e,Dn=Ben.n-Aen.n; const L=Math.hypot(De,Dn)||1; De/=L;Dn/=L;
-  const Fe=-Dn, Fn=De;
+  // 断面の向き(De,Dn)＝崖を横断する方向／(Fe,Fn)＝断面を並べる方向。基準線があればそれに直交させ、
+  // 無ければ従来通り測線(A→B)の向きを使う。符号（どちらが+か）はdetectStripSide()のintoSign方式が
+  // 断面ごとの相対位置だけで決めるため、どちらの分岐でも下流の判定に影響しない（DESIGN.md §4参照）。
+  let De,Dn,Fe,Fn;
+  if(useRefLine){
+    const Ren=toEN(REF_LINE.a), Rbn=toEN(REF_LINE.b);
+    let Re=Rbn.e-Ren.e, Rn=Rbn.n-Ren.n; const RLen=Math.hypot(Re,Rn)||1; Re/=RLen; Rn/=RLen;
+    Fe=Re; Fn=Rn;      // 断面を並べる向き＝基準線に沿う
+    De=Rn; Dn=-Re;     // 断面が伸びる向き＝基準線に直交
+  } else {
+    const Aen=toEN(A),Ben=toEN(B); let De0=Ben.e-Aen.e,Dn0=Ben.n-Aen.n; const L0=Math.hypot(De0,Dn0)||1;
+    De=De0/L0; Dn=Dn0/L0;
+    Fe=-Dn; Fn=De;
+  }
   const sEN=siteLatLngs.map(toEN);
   // 2026-08-21（項目2）：D/E（隣接2筆）を持つ物件は、断面(strip)を生成する範囲(aMin/aMax/bMin/bMax)を
   // D/Eの外周まで広げる（generateFlat()と同じ「sEN.push」パターン）。ABCのみの範囲だとD/Eがこの外に
@@ -2386,7 +2407,7 @@ async function generateBand(){
     drawBand();
     BAND_DONE=true; measureLayer.clearLayers();
     const rc=BAND_STRIPS.filter(s=>s.base).length, cc=BAND_STRIPS.filter(s=>s.cyan).length;
-    if(prog) prog.textContent=`完了：崖上(赤)${rc}本・崖下(シアン)${cc}本 検出`;
+    if(prog) prog.textContent=`完了：崖上(赤)${rc}本・崖下(シアン)${cc}本 検出${useRefLine?'（基準線に直交）':''}`;
     drawCellsAndAreas(toEN,toLL,cLat,cLon);
     return;
   }
@@ -2479,7 +2500,7 @@ async function generateBand(){
   drawBand();
   BAND_DONE=true; measureLayer.clearLayers();
   const rc2=BAND_STRIPS.filter(s=>s.base).length, cc2=BAND_STRIPS.filter(s=>s.cyan).length;
-  if(prog) prog.textContent=`完了：崖上(赤)${rc2}本・崖下(シアン)${cc2}本 検出（全${cnt}断面）`;
+  if(prog) prog.textContent=`完了：崖上(赤)${rc2}本・崖下(シアン)${cc2}本 検出（全${cnt}断面）${useRefLine?'（基準線に直交）':''}`;
   drawCellsAndAreas(toEN,toLL,cLat,cLon);
 }
 /* 敷地格子の使用可否を着色＋面積ラベル（生成・共有で共通） */
@@ -2888,6 +2909,71 @@ function loadCdeAnchor(){
   return null;
 }
 const cdeAnchorLayer=L.layerGroup().addTo(map);
+
+/* ====== 基準線（道路沿い）：2H影響帯の断面方向を「目視で概ね直角」ではなく道路に実測で
+   直交させるための機能（2026-08-22追加。消込表#265）。cdeAnchorと同じ「物件別にlocalStorage保存・
+   switchSite()で読み直す」前提を踏襲しつつ、2点収集は📏距離計測ツール(measurePts)と同じ
+   「2点貯めて描画、置き直しは仕切り直し」パターンを流用する。generateBand()冒頭の
+   De/Dn/Fe/Fn計算だけに効き、単一断面図プレビュー（generateSection()/twoHSign()）や
+   崖のred/cyan判定（intoSign方式）には一切影響しない（docs/DESIGN.md §4・§11参照）。 ====== */
+let REF_LINE={a:null, b:null};   // 道路沿いの2点。各{lat,lon}。物件別にlocalStorage保存
+let refLineMode=false;           // 武装中（地図クリック待ち）か
+let refLinePts=[];               // 武装中に収集中の点（0〜1個）
+function refLineKey(){ return 'kouteisa_refline_'+CURRENT_SITE; }
+function saveRefLine(){ try{ if(REF_LINE.a && REF_LINE.b) localStorage.setItem(refLineKey(), JSON.stringify(REF_LINE)); else localStorage.removeItem(refLineKey()); }catch(e){} }
+function loadRefLine(){
+  try{ const raw=localStorage.getItem(refLineKey()); if(raw){ const j=JSON.parse(raw); if(j&&j.a&&j.b) return j; } }catch(e){}
+  return {a:null,b:null};
+}
+function handleRefLineClick(latlng){
+  refLinePts.push({lat:latlng.lat,lon:latlng.lng});
+  if(refLinePts.length>=2){
+    REF_LINE={a:refLinePts[0], b:refLinePts[1]};
+    refLinePts=[]; refLineMode=false;
+    saveRefLine();
+  }
+  drawRefLine();
+  updateRefLineUI();
+}
+function toggleRefLineMode(){
+  refLineMode=!refLineMode;
+  if(refLineMode) refLinePts=[];   // 武装したら選び直し
+  drawRefLine();
+  updateRefLineUI();
+}
+function clearRefLine(){
+  REF_LINE={a:null,b:null}; refLinePts=[]; refLineMode=false;
+  saveRefLine(); drawRefLine(); updateRefLineUI();
+}
+const refLineLayer=L.layerGroup().addTo(map);
+function drawRefLine(){
+  refLineLayer.clearLayers();
+  if(refLineMode && refLinePts.length===1){
+    makeDot(refLineLayer,[refLinePts[0].lat,refLinePts[0].lon],'#22d3ee',false);
+  }
+  if(REF_LINE.a && REF_LINE.b){
+    const a=REF_LINE.a, b=REF_LINE.b;
+    makeDot(refLineLayer,[a.lat,a.lon],'#22d3ee',false);
+    makeDot(refLineLayer,[b.lat,b.lon],'#22d3ee',false);
+    L.polyline([[a.lat,a.lon],[b.lat,b.lon]],{color:'#22d3ee',weight:3}).addTo(refLineLayer);
+    makeLabel(refLineLayer, L.latLng((a.lat+b.lat)/2,(a.lon+b.lon)/2), '基準線', '#22d3ee');
+    // 直交方向プレビュー：目視確認が今回の要望の核（「目視で合わせてるのをやめたい」）なので省略しない
+    const mid={lat:(a.lat+b.lat)/2, lon:(a.lon+b.lon)/2};
+    const perp=bearingRad(a,b)+Math.PI/2;
+    const p1=destination(mid, perp, 12), p2=destination(mid, perp+Math.PI, 12);
+    L.polyline([[p1.lat,p1.lon],[mid.lat,mid.lon],[p2.lat,p2.lon]],{color:'#fbbf24',weight:3}).addTo(refLineLayer);
+  }
+}
+function updateRefLineUI(){
+  const btn=document.getElementById('refLineBtn');
+  if(btn) btn.textContent = refLineMode ? `地図をクリック…(${refLinePts.length}/2点)` : (REF_LINE.a ? '基準線を置き直す' : '基準線を地図で指定');
+  if(refLineMode) map.getContainer().style.cursor='crosshair';
+  else if(!cdeAnchorMode && !measureActive) map.getContainer().style.cursor='';   // 他の武装モードのカーソルを奪わない
+  const clearBtn=document.getElementById('refLineClearBtn');
+  if(clearBtn) clearBtn.style.display = REF_LINE.a ? '' : 'none';
+  const lbl=document.getElementById('refLineReadout');
+  if(lbl) lbl.textContent = REF_LINE.a ? '基準線を設定済み：これに直交する向きで生成されます' : (refLineMode ? '道路に沿って2点クリックしてください' : '未指定（「1. 測線の点」の向きを使用）');
+}
 // 「平ら＋軽い造成で可（=|標高−基準|≦gradeM）」の面積が最大になる基準標高を、与えられたセル集合
 // (FLAT_GRID.cellsの部分集合)だけから探す。原理：各セルの標高eは基準Xが[e-gradeM,e+gradeM]の
 // 範囲にある間だけ「使える」に入る。区間の重なりが最大になるX（区間スタビング）を
@@ -4736,6 +4822,7 @@ updateFlatSchemeUI();
 flatRef=loadFlatRef();
 drawFlatRef();
 loadFlatPlanes(); updatePlanesUI();   // 2つの基準面（低い面/高い面）：switchSite()と同じ初期化をここでも行う
+REF_LINE=loadRefLine(); refLinePts=[]; refLineMode=false; drawRefLine(); updateRefLineUI();   // 基準線（道路沿い）：switchSite()と同じ初期化をここでも行う
 setTool(TOOL);
 ['top','bottom'].forEach(k=>setPoint(k,POINTS[k].lat,POINTS[k].lon,false));
 if(!VIEW){ fetchElev('top'); fetchElev('bottom'); }
