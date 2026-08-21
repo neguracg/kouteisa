@@ -1987,6 +1987,23 @@ async function generateBand(){
   deSubAreaPolys().forEach(d=>d.latlngs.forEach(p=>sEN.push(toEN(p))));
   const aArr=sEN.map(p=>p.e*De+p.n*Dn), bArr=sEN.map(p=>p.e*Fe+p.n*Fn);
   const aMin=Math.min(...aArr),aMax=Math.max(...aArr),bMin=Math.min(...bArr),bMax=Math.max(...bArr);
+  // sub-strip から崖を1つ検出し「敷地縁の崖ヘリ点→敷地内へ2H」を返す。intoSign=+1:上側sub(敷地内=+a方向)/-1:下側sub
+  // （2026-08-21：両崖モード専用だったものを、単崖モードの片側ずつ検出（下記）でも使うため共通化。ロジックは無変更）
+  const detectStripSide=(sub,intoSign)=>{
+    if(sub.length<5) return null;
+    const det=detectCore(sub);
+    if(!((det.status==='ok'||det.status==='short')&&det.baseK!=null)) return null;
+    const foot=sub[det.P[det.baseK].si], crest=sub[det.P[det.qK].si];
+    const H=crest.elev-foot.elev; if(H<=0) return null;
+    const outer=intoSign>0?sub[0]:sub[sub.length-1];        // 敷地から遠い端
+    const edge =intoSign>0?sub[sub.length-1]:sub[0];         // 敷地縁側の端
+    const type=(outer.elev>edge.elev)?'red':'cyan';          // 外側が高い→崖上(赤)/低い→崖下(シアン)
+    const near=(type==='red')?foot:crest;                    // 敷地縁側の崖ヘリ点（崖上=足元/崖下=ヘリ）
+    const twoH=mul*H;
+    const nearEN=toEN(near);
+    const reach=toLL(nearEN.e+intoSign*De*twoH, nearEN.n+intoSign*Dn*twoH); // 敷地内へ2H
+    return {type, base:{lat:near.lat,lon:near.lon}, reach, twoH, H};
+  };
   /* ===== 両崖（崖上＋崖下）モード：敷地の両側で崖を検出し2本の2H帯を重ねる ===== */
   if(SITE.twoSided){
     const aStart=aMin-60, aEnd=aMax+60;   // 左右対称マージン
@@ -1996,22 +2013,6 @@ async function generateBand(){
     if(nStrip>90 && !confirm(`帯 ${nStrip+1} 本・約${ptsPer*(nStrip+1)}点を取得します。時間がかかります。続行?`)) return;
     showLoading('がけ条例 該当範囲を計算中…（両崖・最大1〜2分）');
     const prog=document.getElementById('bandProg'); bandLayer.clearLayers(); selLayer.clearLayers(); cellLayer.clearLayers(); BAND_STRIPS=[];
-    // sub-strip から崖を1つ検出し「敷地縁の崖ヘリ点→敷地内へ2H」を返す。intoSign=+1:上側sub(敷地内=+a方向)/-1:下側sub
-    const detectStripSide=(sub,intoSign)=>{
-      if(sub.length<5) return null;
-      const det=detectCore(sub);
-      if(!((det.status==='ok'||det.status==='short')&&det.baseK!=null)) return null;
-      const foot=sub[det.P[det.baseK].si], crest=sub[det.P[det.qK].si];
-      const H=crest.elev-foot.elev; if(H<=0) return null;
-      const outer=intoSign>0?sub[0]:sub[sub.length-1];        // 敷地から遠い端
-      const edge =intoSign>0?sub[sub.length-1]:sub[0];         // 敷地縁側の端
-      const type=(outer.elev>edge.elev)?'red':'cyan';          // 外側が高い→崖上(赤)/低い→崖下(シアン)
-      const near=(type==='red')?foot:crest;                    // 敷地縁側の崖ヘリ点（崖上=足元/崖下=ヘリ）
-      const twoH=mul*H;
-      const nearEN=toEN(near);
-      const reach=toLL(nearEN.e+intoSign*De*twoH, nearEN.n+intoSign*Dn*twoH); // 敷地内へ2H
-      return {type, base:{lat:near.lat,lon:near.lon}, reach, twoH, H};
-    };
     let cnt=0;
     try{
       for(let b=bMin;b<=bMax+1e-6;b+=1.0){
@@ -2038,46 +2039,96 @@ async function generateBand(){
     drawCellsAndAreas(toEN,toLL,cLat,cLon);
     return;
   }
-  const upM=10, downM=60;
-  const aStart=aMin-upM, aEnd=aMax+downM;
+  /* ===== 単崖モード（2026-08-21 再設計：敷地の両側を別々に検出する） =====
+     旧実装は断面(strip)全体を1本のプロファイルとしてdetectCore()にかけ「支配的な崖1つ」だけを
+     採用していた。平井のような「丘（道路の上の崖）→敷地→川→対岸」という谷型のプロファイルでは、
+     detectCore()の読み取り起点ヒューリスティック（lowAtStart＝両端の低い方から読む）が意味を失い、
+     ①どちらの崖が検出されるかがDEMの0.1mノイズ次第で断面ごとに変わる（87本中30本しか検出できず
+     帯が虫食いになる）②検出されても片側の崖しか帯にならない（E区画側の道路上崖とD区画側の川崖は
+     両方実在するのに、常にどちらかが黙って落ちる）という2つの実害があった（腱さん報告
+     「断面図1本だとEはほとんど影響内なのに帯だとちょっとしか重ならない」の正体。docs/BUGLOG.md参照）。
+     両崖モードと同じ「片側ずつのsub-stripでdetectStripSide()」方式に統一する。分割位置は
+     両崖モードのような固定bbox(aMin/aMax)ではなく、断面ごとの実際の土地（ABC＋D/E）の縁で切る
+     （多角形が斜めの部分でも縁の外側だけを崖検出の対象にするため）。さらに各subは
+     「内部の最低点（谷底）で打ち切る」＝川の対岸の斜面など、谷を挟んだ向こう側の地形を
+     こちら側の崖のHに算入しない（対岸の緩斜面をノイズで崖と誤認する事故も防ぐ）。 */
+  /* マージンは左右対称±30m（旧: 上側10m/下側60mの非対称＝上側の崖の稜線が10m以内に無いと
+     切れてHを過小評価していた）。±60にしない理由: 総点数上限(8000)の制約下でマージンを広げると
+     点間隔が自動で粗くなり（実測: ±60で2.25m）、H=2.5〜3m級の小さな崖（例: 平井D区画の川縁）が
+     2m平滑化と合わさって30°判定から消える＝「検出の届く距離」より「検出の分解能」を優先する。
+     ±30mで取りこぼすのは「30m先から2Hが敷地に届く崖」＝H15m級以上のみ（当該物件には存在しない。
+     必要になったら上限とセットで拡張する）。 */
+  const aStart=aMin-30, aEnd=aMax+30;
   const nStrip=Math.floor((bMax-bMin)/1.0);
   let ptsPer=Math.floor((aEnd-aStart)/step);
-  while(ptsPer*(nStrip+1)>6000){ step*=1.5; ptsPer=Math.floor((aEnd-aStart)/step); }
+  while(ptsPer*(nStrip+1)>8000){ step*=1.5; ptsPer=Math.floor((aEnd-aStart)/step); }
   if(nStrip>90 && !confirm(`帯 ${nStrip+1} 本・約${ptsPer*(nStrip+1)}点を取得します。時間がかかります。続行?`)) return;
-  showLoading('がけ条例 該当範囲を計算中…（最大1分ほどお待ちください）');
+  showLoading('がけ条例 該当範囲を計算中…（最大1〜2分ほどお待ちください）');
   const prog=document.getElementById('bandProg'); bandLayer.clearLayers(); selLayer.clearLayers(); cellLayer.clearLayers(); BAND_STRIPS=[];
+  // 断面（b固定の直線）と土地（ABC＋D/E）の交差のa範囲。無交差ならnull（そのstripは土地を通らない）
+  const landPolysEN=[siteLatLngs.map(toEN), ...deSubAreaPolys().map(d=>d.latlngs.map(toEN))];
+  const landIntervalA=(b)=>{
+    const as=[];
+    landPolysEN.forEach(poly=>{
+      for(let i=0;i<poly.length;i++){
+        const p=poly[i], q=poly[(i+1)%poly.length];
+        const cP=p.e*Fe+p.n*Fn, cQ=q.e*Fe+q.n*Fn;
+        if((cP>b)===(cQ>b)) continue;
+        const t=(b-cP)/(cQ-cP);
+        const aP=p.e*De+p.n*Dn, aQ=q.e*De+q.n*Dn;
+        as.push(aP+t*(aQ-aP));
+      }
+    });
+    return as.length ? [Math.min(...as), Math.max(...as)] : null;
+  };
+  // subを「内部の谷底」で打ち切る。keepHead=true:先頭(縁側)〜谷底を残す/false:谷底〜末尾(縁側)を残す。
+  // 「谷」と認めるのは【縁の標高から1m以上下がり、その先（外側）で谷底から1m以上登り返す】場合だけ。
+  // 単なる平坦面の±0.1m DEMノイズの極小を谷底と誤認すると、そこで切って崖ごと捨ててしまう
+  // （初版実装で実際に発生：道路の平坦面(23.9/24.0の揺れ)の途中を谷底と誤認し、上側の崖(H≈5m)を
+  //  含むsubが3点まで縮んで検出不能になった）。
+  const trimAtValley=(sub,keepHead)=>{
+    if(sub.length<3) return sub;
+    const edgeElev = keepHead ? sub[0].elev : sub[sub.length-1].elev;
+    const vmin=Math.min(...sub.map(s=>s.elev));
+    // 谷底の位置＝最小値のうち縁から最も遠い出現（底の平坦部分を縁側に残す）
+    let mi=-1;
+    sub.forEach((s,i)=>{ if(s.elev<=vmin+1e-9){ if(mi<0 || (keepHead ? i>mi : i<mi)) mi=i; } });
+    if(mi<=0||mi>=sub.length-1) return sub;
+    const outer = keepHead ? sub.slice(mi+1) : sub.slice(0,mi);
+    const outerMax=Math.max(...outer.map(s=>s.elev));
+    if(!(edgeElev-vmin>=1.0 && outerMax-vmin>=1.0)) return sub;   // 本物の谷でなければ切らない
+    return keepHead ? sub.slice(0,mi+1) : sub.slice(mi);
+  };
   let cnt=0;
   try{
     for(let b=bMin;b<=bMax+1e-6;b+=1.0){
       const startLL=toLL(aStart*De+b*Fe, aStart*Dn+b*Fn);
       const endLL  =toLL(aEnd*De+b*Fe,   aEnd*Dn+b*Fn);
       const samples=await sampleSectionLL(startLL,endLL,step);
-      const det=detectCore(samples);
       cnt++; if(prog) prog.textContent=`生成中 ${cnt}/${nStrip+1} 本`;
       document.getElementById('loadingMsg').textContent=`がけ条例 該当範囲を計算中… ${cnt}/${nStrip+1} 断面`;
       const rec={samples,startLL,endLL};
-      if((det.status==='ok'||det.status==='short')&&det.baseK!=null){
-        const base=samples[det.P[det.baseK].si], crest=samples[det.P[det.qK].si];
-        const H=crest.elev-base.elev;
-        // 2026-08-21 修正：2Hは崖下端から「崖と反対側（平地側）」へ水平＝稜線(crest)→下端(foot)の
-        // 向きの延長で決まる、崖自身の形状だけの量。旧実装は「敷地重心との位置関係」(footAの符号)を
-        // 主に使っており、断面(strip)ごとにfootAの符号が反転しうるため帯が自己交差(蝶ネクタイ化)する
-        // バグだった（実機再現・詳細はdocs/BUGLOG.md参照）。footA-crestAが0になるのはcrestとfootが
-        // 測線軸上で同じ位置＝崖として成立しない縮退ケースのみで、そこだけ旧式へフォールバックする。
-        const bEN=toEN(base), cEN=toEN(crest);
-        const footA=bEN.e*De+bEN.n*Dn, crestA=cEN.e*De+cEN.n*Dn;
-        let sgn=Math.sign(footA-crestA) || -Math.sign(footA) || 1;   // 稜線→下端の向きの延長＝崖と反対側（平地側）
-        const uE=sgn*De, uN=sgn*Dn;
-        const reach=toLL(bEN.e+uE*mul*H, bEN.n+uN*mul*H);
-        Object.assign(rec,{base:{lat:base.lat,lon:base.lon},baseEN:bEN,up:{e:uE,n:uN},twoH:mul*H,reach});
-      } else rec.none=true;
+      const lint=landIntervalA(b);
+      if(lint){
+        const OVERLAP=3;   // 土地の縁を3mだけ跨いで含める（縁ぴったりの崖ヘリ・下端を取りこぼさない）
+        // samplesのdistはaStart起点なので a = aStart + dist
+        const upFull=samples.filter(s=>(aStart+s.dist)<=lint[0]+OVERLAP);   // 上側: 外〜縁（縁側が末尾）
+        const dnFull=samples.filter(s=>(aStart+s.dist)>=lint[1]-OVERLAP);   // 下側: 縁〜外（縁側が先頭）
+        const upSub=trimAtValley(upFull,false);   // 谷底〜縁側だけ残す（谷の向こうの丘を捨てる）
+        const dnSub=trimAtValley(dnFull,true);    // 縁側〜谷底だけ残す（川の対岸を捨てる）
+        [detectStripSide(upSub,+1), detectStripSide(dnSub,-1)].forEach(r=>{ if(!r) return;
+          if(r.type==='red' && !rec.base){ rec.base=r.base; rec.reach=r.reach; rec.twoH=r.twoH; rec.H=r.H; }
+          else if(r.type==='cyan' && !rec.cyan){ rec.cyan={base:r.base,reach:r.reach,twoH:r.twoH,H:r.H}; }
+        });
+      }
+      if(!rec.base && !rec.cyan) rec.none=true;
       BAND_STRIPS.push(rec);
     }
   } finally { hideLoading(); }
   drawBand();
   BAND_DONE=true; measureLayer.clearLayers();
-  const ok=BAND_STRIPS.filter(s=>!s.none);
-  if(prog) prog.textContent=`完了：${ok.length}/${cnt} 本で崖検出`;
+  const rc2=BAND_STRIPS.filter(s=>s.base).length, cc2=BAND_STRIPS.filter(s=>s.cyan).length;
+  if(prog) prog.textContent=`完了：崖上(赤)${rc2}本・崖下(シアン)${cc2}本 検出（全${cnt}断面）`;
   drawCellsAndAreas(toEN,toLL,cLat,cLon);
 }
 /* 敷地格子の使用可否を着色＋面積ラベル（生成・共有で共通） */
@@ -2152,12 +2203,15 @@ function drawBand(){
     hit.bindTooltip('クリックで断面図',{sticky:true});
   });
   const redOK=BAND_STRIPS.filter(s=>s.base);
+  // 2026-08-21：単崖モードでも両側検出（赤＋シアン）が出るようになったため、
+  // 文言の出し分けはSITE.twoSidedではなく「実際に両方検出されたか」で行う
+  const dual = redOK.length>=2 && BAND_STRIPS.filter(s=>s.cyan).length>=2;
   if(redOK.length>=2){
     const baseLine=redOK.map(s=>[s.base.lat,s.base.lon]);
     const reachLine=redOK.map(s=>[s.reach.lat,s.reach.lon]);
     L.polygon(baseLine.concat(reachLine.slice().reverse()),{stroke:false,fillColor:'#ff3b6b',fillOpacity:.14,interactive:false}).addTo(bandLayer);
-    L.polyline(baseLine,{color:'#ffb020',weight:2,interactive:false}).addTo(bandLayer).bindTooltip(SITE.twoSided?'崖上側 崖ヘリライン':'崖下端ライン',{sticky:true});
-    L.polyline(reachLine,{color:'#ff3b6b',weight:4,interactive:false}).addTo(bandLayer).bindTooltip(SITE.twoSided?'崖上側 2H影響ライン（赤）':'2H影響ライン',{sticky:true});
+    L.polyline(baseLine,{color:'#ffb020',weight:2,interactive:false}).addTo(bandLayer).bindTooltip(dual?'崖上側 崖ヘリライン':'崖下端ライン',{sticky:true});
+    L.polyline(reachLine,{color:'#ff3b6b',weight:4,interactive:false}).addTo(bandLayer).bindTooltip(dual?'崖上側 2H影響ライン（赤）':'2H影響ライン',{sticky:true});
   }
   const cyanOK=BAND_STRIPS.filter(s=>s.cyan);
   if(cyanOK.length>=2){
