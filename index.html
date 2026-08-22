@@ -332,21 +332,25 @@
           </div>
           <div id="deSplitAreaInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
           <div style="display:grid;grid-template-columns:auto 58px 44px auto;gap:6px 6px;align-items:center;margin-top:8px;font-size:12px">
-            <span>X区画 目標面積</span>
+            <span>①X区画 目標面積(生)</span>
             <input id="deTargetArea" type="text" inputmode="decimal" placeholder="例 150">
             <select id="deTargetAreaUnit">
               <option value="tsubo" selected>坪</option>
               <option value="m2">㎡</option>
             </select>
-            <button class="small" onclick="applyDeTargetArea()" title="この面積になる%へ反映">反映</button>
-            <span>使える面積</span>
+            <button class="small" onclick="applyDeTargetArea()" title="この面積(生)になる%へ反映">反映</button>
+            <span>②使える面積(下の段)</span>
             <input id="deTargetUsable" type="text" inputmode="decimal" placeholder="例 150">
             <select id="deTargetUsableUnit">
               <option value="tsubo" selected>坪</option>
               <option value="m2">㎡</option>
             </select>
-            <button class="small" onclick="applyDeTargetUsable()" title="この使える面積になる%へ反映">反映</button>
+            <button class="small" onclick="applyDeTargetUsable()" title="この使える面積(下の段)になる%へ反映">反映</button>
           </div>
+          <!-- 2026-08-22：①（生面積）と②（下の段の使える面積）の違いが分からず「バグってない？」と
+               報告された前例があるため（docs/BUGLOG.md参照）、ラベルに①②番号と「(生)」「(下の段)」を
+               明記して押す前に区別できるようにした。②は自由探索ではなく現在の下の段の基準標高で
+               固定して評価する（applyDeTargetUsable()参照）。 -->
         </div>
       </div>
       <!-- 面積一覧表ブロック（2026-08-20再編・項目4）。中身(#flatResult)はcomputeFlatAreas()が丸ごと
@@ -3153,7 +3157,15 @@ function bestRefForRegion(regionPts, gradeM){
 // 「使える面積」が最大になる基準点を毎回ライブで探して適用する（ラインを動かすたびに、
 // その位置でのX区画の最適解を動的に反映＝スライダー操作そのものが探索ツールになる）。
 // 2026-08-18改名：関数名・引数名(pctE)は旧「DE分割」時代のまま（E→Xの単純な呼び替え、動作は無変更）。
-function applyDeSplitPercent(pctE){
+// 2026-08-22：第2引数fixedElevを追加（指示書の設計からの逸脱・理由は下記）。省略時（スライダー操作・
+// applyDeTargetArea()＝①ボタン）は従来どおりbestRefForRegion()の自由探索のまま変更していない。
+// 【逸脱理由】applyDeTargetUsable()（②ボタン）は「下の段の基準標高で固定して」使える面積を評価する
+// よう修正したが、そのままこの関数をfixedElev無しで呼ぶと、%を求めた直後にこの関数内の自由探索が
+// 動いてしまい、基準点が下の段(21.6m)から上の段寄りの別の標高(実測21.8m)へ動いてしまい、
+// 表示される使える面積が目標の140坪ではなく145.3坪になる不整合を実機テストで発見した。
+// fixedElevが渡された時は自由探索をスキップし、基準点(flatRef)を動かさずそのまま使う
+// （＝下の段の基準標高を維持したまま、X/Y分割の位置とそこでの使える面積表示だけを更新する）。
+function applyDeSplitPercent(pctE, fixedElev){
   pctE=Math.max(0.5,Math.min(99.5, pctE));
   const r=splitSiteByPercent(100-pctE);   // Dの%=100-E%として既存のsplitSiteByPercentへ渡す
   SITE.subAreaSets.XY=[{no:'X区画', pts:r.E},{no:'Y区画', pts:r.D}];   // X区画が主役＝先頭
@@ -3170,6 +3182,20 @@ function applyDeSplitPercent(pctE){
   renderPriceSim();   // 面積比の試算は格子未取得でも追従（使える面積比の方はFLAT_GRID待ち）
   if(!FLAT_GRID) return r;   // 格子未取得＝面積の表示だけで、基準点の最適化はまだできない
   const usableM=currentUsableM();
+  if(fixedElev!=null){
+    // 下の段固定モード（②ボタン専用）：自由探索はしない。基準点(flatRef)は動かさず、
+    // fixedElevとの差が既存のflatRefと食い違っていた場合だけ標高を合わせ直す（位置=lat/lonは不変）。
+    const ll=shapeToLatLngs(r.E, SITE_XFORM);
+    const area=usableAreaAtElev(ll, fixedElev, usableM);
+    if(flatRef && flatRef.elev!==fixedElev){
+      flatRef={...flatRef, elev:fixedElev};
+      if(ACTIVE_PLANE==='low') FLAT_PLANES.low={lat:flatRef.lat, lon:flatRef.lon, elev:fixedElev};
+      drawFlatRef(); saveFlatRef(); saveFlatPlanes();
+    }
+    recomputeFlatOnly();   // 新しいX/Y分割形状を色分け・区画別表へ反映（flatRef自体は不変）
+    if(prog) prog.textContent=`X=${pctE.toFixed(1)}% → 基準標高${fixedElev.toFixed(1)}m（下の段）でX区画の使える面積 約${area.toFixed(0)}㎡（${(area/3.305785).toFixed(1)}坪）`;
+    return r;
+  }
   const best=bestRefForRegion(r.E, usableM);
   if(best && best.cell){
     flatRef={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev, hsrc:flatRef?flatRef.hsrc:null};
@@ -3194,18 +3220,29 @@ function applyDeTargetArea(){
   if(targetM2>=total){ alert(`敷地全体でも約${total.toFixed(0)}㎡（${(total/3.305785).toFixed(1)}坪）しかありません。`); return; }
   applyDeSplitPercent(targetM2/total*100);
 }
-// 逆算②：「使える面積(平+軽造成)最大化」を前提に、X区画がその目標使える面積になる%を求める。
-// 原理：Xは%について単調に広がる(入れ子)集合なので、"最適基準点での使える面積"も%について単調非減少
-// →%について二分探索できる。各候補%ごとにbestRefForRegion()でX内の最適基準点を都度計算(入れ子最適化)。
+// 逆算②：「下の段」を前提に、X区画がその目標使える面積になる%を求める。
+// 2026-08-22（方針変更・腱さん指摘への回答）：上の段が使えなくなったため、探索の基準を
+// 「X区画内でbestRefForRegion()が自由に探す最適基準標高」から「現在の下の段の基準標高
+// （FLAT_PLANES.low、未設定ならflatRef.elev）に固定した評価」へ変更した。自由探索のままだと
+// X区画がまだ上の段の平坦面を含みうる%では、その平坦面を掴んで使える面積を水増ししてしまい、
+// 「140坪と指定したら下の段が140坪になる%」という要望に一致しなくなる（docs/BUGLOG.md参照）。
+// 既存のusableAreaAtElev(ll, targetElev, thM)（下の段/上の段を同時に扱うための汎用版）をそのまま
+// 使い、新しい計算関数は作らない。
+// 原理：Xは%について単調に広がる(入れ子)集合なので、"固定標高での使える面積"も%について単調非減少
+// →%について二分探索できる（標高を固定した分、自由探索版よりも単調性はむしろ明確になる）。
 // 最終的な基準点の設定・再描画はapplyDeSplitPercent()に一本化（重複ロジックを持たない）。
 function applyDeTargetUsable(){
   if(!FLAT_GRID){ alert('先に「平坦度を計算」を実行してください。'); return; }
+  const targetElev = FLAT_PLANES.low ? FLAT_PLANES.low.elev : (flatRef ? flatRef.elev : null);
+  if(targetElev==null){ alert('先に「平坦度を計算」を実行してください。'); return; }
   const targetM2=targetM2FromInput('deTargetUsable','deTargetUsableUnit');
   if(targetM2==null){ alert('X区画の目標「使える面積」を入力してください。'); return; }
   const usableM=currentUsableM();
-  const usableAt=(pctE)=> bestRefForRegion(splitSiteByPercent(100-pctE).E, usableM);
+  // 固定した下の段の基準標高(targetElev)で、X区画(pctE%)の使える面積を評価する。
+  // 呼び出し側は元のbestRefForRegion()と同じ{area}形状を期待しているため、そのまま合わせる。
+  const usableAt=(pctE)=> ({area: usableAreaAtElev(shapeToLatLngs(splitSiteByPercent(100-pctE).E, SITE_XFORM), targetElev, usableM)});
   const at05=usableAt(0.5), at995=usableAt(99.5);
-  if(targetM2>at995.area+1e-6){ alert(`このX/Y分割方向では、X区画は最大でも約${(at995.area/3.305785).toFixed(1)}坪までしか「使える面積」を確保できません。`); return; }
+  if(targetM2>at995.area+1e-6){ alert(`このX/Y分割方向では、X区画は最大でも約${(at995.area/3.305785).toFixed(1)}坪までしか、下の段の「使える面積」を確保できません。`); return; }
   let pctFinal=0.5;
   if(targetM2<=at05.area){ pctFinal=0.5; }
   else{
@@ -3213,7 +3250,9 @@ function applyDeTargetUsable(){
     for(let i=0;i<24;i++){ const mid=(lo+hi)/2; if(usableAt(mid).area<targetM2) lo=mid; else hi=mid; }
     pctFinal=(lo+hi)/2;
   }
-  applyDeSplitPercent(pctFinal);
+  // fixedElevを渡し、applyDeSplitPercent()内の自由探索をスキップして基準点を下の段のまま維持する
+  // （渡さないと関数内のbestRefForRegion()が動いてしまい、探索した%と食い違う標高に着地する）。
+  applyDeSplitPercent(pctFinal, targetElev);
 }
 
 async function generateFlat(){
