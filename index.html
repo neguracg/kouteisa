@@ -1384,6 +1384,18 @@ function deRegionLatLngs(region){
 // (drawSubAreaDE)・平坦度の区画別内訳・価格シミュレーションの「隣接筆」セクション全部に伝播する）。
 function deSubAreaPolys(){
   if(!SHOW_DE_REGIONS) return [];   // 2026-08-22：D/Eを非表示（全利用側が空配列を正しく扱う設計）
+  return deTerrainPolys();
+}
+// 2026-08-22（デグレード修正）：D/E非表示化(SHOW_DE_REGIONS)は「D/Eを購入・評価の対象から外す」
+// という意図だったが、deSubAreaPolys()を全利用側の唯一の入口にしたため、がけ判定の断面(strip)生成
+// 範囲・セル走査範囲までD/Eの土地が丸ごと消え、D/E上（またはABCとの境界付近）にある崖が検出されなく
+// なる実害が出た（腱さん報告「2H影響帯描画　DEが対象から外れてる　デグレードしてる」）。
+// 崖は購入するかどうかに関わらず現地に実在するため、がけ判定の「土地の物理的な広がり」を必要とする
+// 箇所（断面生成範囲・セル走査範囲・断面ハイライト線のクリップ）は、SHOW_DE_REGIONSの影響を受けない
+// この関数を使う。D/Eの「表示・面積集計・購入シナリオ」（地図上のD/E区画表示・平坦度の面積一覧・
+// 価格シミュ等）はdeSubAreaPolys()（非表示）のままでよい＝2つの異なる意味を1つの関数で
+// 兼用していたのが混同の原因だったので、意味ごとに関数を分けた。
+function deTerrainPolys(){
   const areas=SITE.subAreaSets && SITE.subAreaSets.DE;
   if(!areas) return [];
   return areas.map(s=>({no:s.no, key:s.key, latlngs:deRegionLatLngs(s.key)}));
@@ -2053,15 +2065,19 @@ function drawSubAreaDE(){
    SITE_XFORM確定後（drawSite()の後）に呼ぶこと＝defaultDeRegionAdj()がSITE_XFORMを使うため。 */
 function updateDeExtentUI(){
   const wrap=document.getElementById('deExtentWrap');
-  // 2026-08-22：D/E専用の調整パネル（deCtrl_D/E・deAdjBtn_D/E・面積表示を含む）を丸ごと隠す。
+  const has=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
+  // 2026-08-22（デグレード修正）：deRegionAdjの読み込みはSHOW_DE_REGIONSに関わらず常に行う。
+  // 元は「表示しないなら読む必要も無い」と考えて丸ごと早期returnしていたが、deRegionAdjは
+  // deRegionLatLngs()経由でdeTerrainPolys()（がけ判定の断面生成・セル走査で常時使用）にも
+  // 使われるため、読み込みを止めるとD/Eの緯度経度が起動時プレースホルダ{lat:0,lon:0,...}
+  // （赤道付近）のまま固定され、がけ判定がD/Eの位置に全く関係ない場所を誤って走査する実害
+  // が出た（腱さん報告「2H影響帯描画　DEが対象から外れてる　デグレードしてる」の根本原因）。
+  if(has){ ['D','E'].forEach(region=>{ deRegionAdj[region]=loadDeRegionAdj(region); }); }
+  // D/E専用の調整パネル（deCtrl_D/E・deAdjBtn_D/E・面積表示を含む）の表示だけをここで止める。
   // DOM自体は消さず、フラグを戻せば復活する（deSubAreaPolys()と同じ方針）。
   if(!SHOW_DE_REGIONS){ if(wrap) wrap.style.display='none'; return; }
-  const has=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
   if(wrap) wrap.style.display=has?'block':'none';
   if(!has) return;
-  ['D','E'].forEach(region=>{
-    deRegionAdj[region]=loadDeRegionAdj(region);
-  });
   const polys=deSubAreaPolys();
   polys.forEach(s=>{
     const el=document.getElementById('deArea_'+s.key);
@@ -2313,8 +2329,11 @@ function clipToSite(s,e){ // 線分s->eのうちABC敷地内またはD/E内の�
   // 2026-08-21（項目2）：D/E（隣接2筆）だけを通る断面はここがABC限定のままだとnullを返し、
   // drawBand()/showStripSection()が地図上に線を一切描かない＝クリックもできなくなっていた。
   // ABCの辺に加えD/E各区画の辺も交差候補に含め、内外判定もpointInSite()||D/EのpointInLLPoly()に揃える
-  // （drawCutFillOutlines()と同じOR判定パターン。D/Eを持たない物件はdeSubAreaPolys()が空配列を返すため無害）。
-  const des=deSubAreaPolys();
+  // （drawCutFillOutlines()と同じOR判定パターン。D/Eを持たない物件はdeTerrainPolys()が空配列を返すため無害）。
+  // 2026-08-22：deSubAreaPolys()（D/E非表示化で空配列になる）ではなくdeTerrainPolys()（常時実在）を使う。
+  // ここはがけ判定の断面ハイライト線の描画範囲＝物理的な土地の広がりの話であり、D/Eを購入・評価
+  // 対象から外すかどうかとは無関係（deTerrainPolysのコメント参照）。
+  const des=deTerrainPolys();
   const ts=[0,1];
   for(let i=0;i<siteLatLngs.length;i++){const t=segT(s,e,siteLatLngs[i],siteLatLngs[(i+1)%siteLatLngs.length]); if(t!=null) ts.push(t);}
   des.forEach(d=>{ const p=d.latlngs; for(let i=0;i<p.length;i++){ const t=segT(s,e,p[i],p[(i+1)%p.length]); if(t!=null) ts.push(t); } });
@@ -2357,8 +2376,10 @@ async function generateBand(){
   // 2026-08-21（項目2）：D/E（隣接2筆）を持つ物件は、断面(strip)を生成する範囲(aMin/aMax/bMin/bMax)を
   // D/Eの外周まで広げる（generateFlat()と同じ「sEN.push」パターン）。ABCのみの範囲だとD/Eがこの外に
   // 出た場合、そこには断面が1本も生成されずD/E部分の崖検出自体が起こらない（後段のセルbboxを広げても
-  // 無意味）。D/Eを持たない物件はdeSubAreaPolys()が空配列を返すため無害（挙動は従来と完全に同一）。
-  deSubAreaPolys().forEach(d=>d.latlngs.forEach(p=>sEN.push(toEN(p))));
+  // 無意味）。D/Eを持たない物件はdeTerrainPolys()が空配列を返すため無害（挙動は従来と完全に同一）。
+  // 2026-08-22：deSubAreaPolys()ではなくdeTerrainPolys()を使う（D/E非表示化でがけ検出範囲まで
+  // 縮んでしまい崖の検出漏れが起きた「デグレード」の修正。deTerrainPolysのコメント参照）。
+  deTerrainPolys().forEach(d=>d.latlngs.forEach(p=>sEN.push(toEN(p))));
   const aArr=sEN.map(p=>p.e*De+p.n*Dn), bArr=sEN.map(p=>p.e*Fe+p.n*Fn);
   const aMin=Math.min(...aArr),aMax=Math.max(...aArr),bMin=Math.min(...bArr),bMax=Math.max(...bArr);
   // sub-strip から崖を1つ検出し「敷地縁の崖ヘリ点→敷地内へ2H」を返す。intoSign=+1:上側sub(敷地内=+a方向)/-1:下側sub
@@ -2440,7 +2461,8 @@ async function generateBand(){
   showLoading('がけ条例 該当範囲を計算中…（最大1〜2分ほどお待ちください）');
   const prog=document.getElementById('bandProg'); bandLayer.clearLayers(); selLayer.clearLayers(); cellLayer.clearLayers(); BAND_STRIPS=[];
   // 断面（b固定の直線）と土地（ABC＋D/E）の交差のa範囲。無交差ならnull（そのstripは土地を通らない）
-  const landPolysEN=[siteLatLngs.map(toEN), ...deSubAreaPolys().map(d=>d.latlngs.map(toEN))];
+  // 2026-08-22：deSubAreaPolys()ではなくdeTerrainPolys()を使う（同上のデグレード修正）。
+  const landPolysEN=[siteLatLngs.map(toEN), ...deTerrainPolys().map(d=>d.latlngs.map(toEN))];
   const landIntervalA=(b)=>{
     const as=[];
     landPolysEN.forEach(poly=>{
@@ -2519,8 +2541,10 @@ function drawCellsAndAreas(toEN,toLL,cLat,cLon){
   const encCyanList = bandRuns(bandItemsCyan()).map(run=>runToPolygon(run, p=>p));
   // 2026-08-21（項目2）：D/E（隣接2筆）もセルの走査・採否判定に含める。drawCutFillOutlines()と同じ
   // 「pointInPoly()（ABC） || D/EのいずれかのpointInPoly()」のOR判定パターンを流用（D/Eを持たない
-  // 物件はdeSubAreaPolys()が空配列を返すため、pointInPoly(sEN)単体と同じ結果になり無害）。
-  const des=deSubAreaPolys();
+  // 物件はdeTerrainPolys()が空配列を返すため、pointInPoly(sEN)単体と同じ結果になり無害）。
+  // 2026-08-22：deSubAreaPolys()ではなくdeTerrainPolys()を使う（同上のデグレード修正。この走査範囲・
+  // 使用可/影響内の面積タリーはがけ判定タブ自身の物理的な集計であり、D/E非表示化の対象外）。
+  const des=deTerrainPolys();
   const desEN=des.map(d=>({key:d.key, en:d.latlngs.map(toEN)}));
   const sEN=siteLatLngs.map(toEN);
   const bboxEN=sEN.concat(...desEN.map(d=>d.en));   // 走査範囲(bbox)もD/Eの外周まで広げる
@@ -4838,7 +4862,8 @@ function fitToBand(){
   const pts=siteLatLngs.map(p=>[p.lat,p.lon]);
   // 2026-08-21（項目2）：D/Eの外周点も含める。2Hラインがreach点より内側で収まりD/Eの遠い角が
   // ビューから外れるケースの保険（軽微・低リスクな1行追加。D/Eを持たない物件は空配列で無害）。
-  deSubAreaPolys().forEach(d=>d.latlngs.forEach(p=>pts.push([p.lat,p.lon])));
+  // 2026-08-22：deTerrainPolys()を使う（がけ判定の物理的な広がりの話。同上のデグレード修正と同じ理由）。
+  deTerrainPolys().forEach(d=>d.latlngs.forEach(p=>pts.push([p.lat,p.lon])));
   BAND_STRIPS.forEach(s=>{ if(s.reach) pts.push([s.reach.lat,s.reach.lon]); if(s.cyan&&s.cyan.reach) pts.push([s.cyan.reach.lat,s.cyan.reach.lon]); });
   if(pts.length>1) map.fitBounds(pts,{padding:[40,40]});
 }

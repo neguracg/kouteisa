@@ -83,14 +83,31 @@
   （`SHOW_UPPER_TIER=false`。§5参照）。
 
 ### 2026-08-22：D/E・購入シナリオの非表示化とチョークポイント
-- **D/E**: `deSubAreaPolys()`（唯一のチョークポイント）が `SHOW_DE_REGIONS=false` の間は無条件に
-  空配列を返す。全ての利用側（`drawSubAreaDE`/`generateBand`/`clipToSite`/`drawCellsAndAreas`/
-  `drawFlat`/`drawCutFillOutlines`/`cliffBandGeometry`等、20箇所超）はD/Eを持たない物件
-  （函南・camp・古屋・未公開）と同じ「空配列を正しく無害に扱う」経路を通る。
-  **例外＝チョークポイントを経由しない生の `SITE.subAreaSets.DE` 直接参照が2箇所あった**
-  （`priceSimGroups()`・`areaSelectCheckboxesHTML()`。2026-08-22実装時に発見・`SHOW_DE_REGIONS`で
-  個別にガード済み）。D/E関連の新しい消費者を追加する時は、`deSubAreaPolys()`を呼ばず
-  `SITE.subAreaSets.DE`を直接見ていないか要確認。
+- **D/Eには意味が2つある。混ぜるとバグる**（同日中に実際に混ぜて2回事故った）:
+  1. 「D/Eを**購入・評価の対象**として扱うか」＝表示・面積集計・価格シミュの話。
+     `SHOW_DE_REGIONS=false`の間は**非表示**にすべきもの。
+  2. 「D/Eという**土地が物理的に存在するか**」＝がけ判定（2H帯）の断面生成・セル走査範囲の話。
+     崖は購入するかどうかに関わらず現地に実在するため、こちらは**非表示にしてはいけない**
+     （非表示にすると、D/E上または境界付近にある崖が検出されなくなる。腱さん報告
+     「2H影響帯描画　DEが対象から外れてる　デグレードしてる」）。
+  この2つを`deSubAreaPolys()`という**単一の関数で兼用していた**ことが混同の直接原因。
+  意味ごとに関数を分けて解決した：
+  - `deSubAreaPolys()`＝**意味1**（購入・評価対象）。`SHOW_DE_REGIONS=false`の間は空配列。
+    利用側: `drawSubAreaDE`（地図表示）・`exportSitePlannerCSV`/`cliffBandGeometry`（出力の
+    D/E参照線）・平坦度の面積集計・価格シミュ等、20箇所超。
+  - `deTerrainPolys()`＝**意味2**（物理的な土地）。`SHOW_DE_REGIONS`の影響を受けず常時実在。
+    利用側: `generateBand()`の断面生成範囲拡張・`landIntervalA()`（土地の縁でのstrip分割）・
+    `drawCellsAndAreas()`のセル走査bbox・`clipToSite()`（断面ハイライト線のクリップ）・
+    `fitToBand()`（地図フィット）。
+  **新しい消費者を追加する時は、「これは購入評価の話か、物理的な土地の話か」を先に自問してから
+  どちらを呼ぶか決めること。** 生の`SITE.subAreaSets.DE`直接参照（`priceSimGroups()`・
+  `areaSelectCheckboxesHTML()`）も過去に発見済み＝`deSubAreaPolys()`/`deTerrainPolys()`の
+  どちらも経由しない第3の抜け道になるため、新規追加時は必ずどちらか経由にする。
+  - **関連する副次バグ**: `updateDeExtentUI()`が`SHOW_DE_REGIONS=false`の間`deRegionAdj`
+    （D/Eの緯度経度オフセット。localStorageから読む）の読み込み自体を早期returnでスキップして
+    いたため、`deTerrainPolys()`を新設してもD/Eの座標が起動時プレースホルダ`{lat:0,lon:0,...}`
+    （赤道付近）のまま固定される二次災害があった。UIパネルの表示可否とデータの読み込みは
+    別物として分離済み（読み込みは`SHOW_DE_REGIONS`に関わらず常に行う）。
 - **購入シナリオ（上の段）**: `sitePurchaseSets(){ return SHOW_UPPER_TIER ? SITE.purchaseSets : null; }`
   が唯一のチョークポイント。`SITE.purchaseSets`を直接読んでいた5箇所
   （`purchaseSetPolys`/`exportSitePlannerCSV`×2/`runPlaneMaximize`/`updatePlaneSelectUI`/
