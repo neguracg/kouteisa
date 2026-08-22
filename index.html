@@ -360,7 +360,7 @@
       </div>
       <div id="priceSimPanel" style="display:none;margin-top:8px;padding:8px;background:#111c26;border-radius:8px;border:1px solid #2a3542">
         <div style="font-weight:700;color:#e6edf3;font-size:12px;margin-bottom:6px">価格シミュレーション</div>
-        <div class="hint" style="margin:0 0 6px"><b>A区画</b>だけが分かっている価格を基準に、他区画（B/C、XY表示中はX/Yも、常にD/Eも）を<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく単純な比例配分の目安。DE=1170-1/1404-4はABC敷地とは別の隣接地のため、小計はABC小計とは一致しません）。この価格を値引きすると全区画の試算額が連動して変わります。</div>
+        <div class="hint" style="margin:0 0 6px"><b>A区画</b>だけが分かっている価格を基準に、他区画（B/C、XY表示中はX/Yも<span id="priceSimDeNote1">、常にD/Eも</span>）を<b>面積比</b>／<b>使える面積比</b>で按分した試算額を表示します（区画割の実勢価格ではなく単純な比例配分の目安<span id="priceSimDeNote2">。DE=1170-1/1404-4はABC敷地とは別の隣接地のため、小計はABC小計とは一致しません</span>）。この価格を値引きすると全区画の試算額が連動して変わります。</div>
         <div style="display:grid;grid-template-columns:auto 70px auto;gap:6px 6px;align-items:center;font-size:12px">
           <span>A区画 現在価格</span><input id="priceSimBase" type="text" inputmode="decimal" value="1298" oninput="priceSimBaseChanged()">万円
           <span>値引き</span><input id="priceSimDiscountPct" type="text" inputmode="decimal" value="0" oninput="priceSimSyncFromPct()">%
@@ -589,6 +589,11 @@ let SHARED_SINGLE_SECTION = false; // 共有URLが2H影響帯を含まない単�
    復活させたい時はこの2行をtrueに戻す。上の段ありの当時の姿は joukan_20260822.html（凍結版）。 */
 const SHOW_UPPER_TIER = false;   // 上の段（FLAT_PLANES.high・購入シナリオC+D+E・目印点探索）
 const SHOW_DE_REGIONS = false;   // D/E区画（実在の隣接2筆 1170-1・1404-4）
+// 価格シミュレーションの説明文に静的に書かれた「常にD/Eも」の言及を消す（フラグは実行時に変わらない
+// constなので一度だけでよい。DOM自体は残しdisplay:noneにするだけ＝フラグを戻せば復活する）。
+if(!SHOW_DE_REGIONS){
+  ['priceSimDeNote1','priceSimDeNote2'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; });
+}
 
 /* ====== 地図 ====== */
 const map = L.map('map',{maxZoom:22}).setView([35.0933, 138.9554], 19);
@@ -1374,6 +1379,7 @@ function deRegionLatLngs(region){
 // （ABCを動かしてもD/Eは一緒に動かない＝個別調整の唯一の変換の入口。ここを直せば地図の常設描画
 // (drawSubAreaDE)・平坦度の区画別内訳・価格シミュレーションの「隣接筆」セクション全部に伝播する）。
 function deSubAreaPolys(){
+  if(!SHOW_DE_REGIONS) return [];   // 2026-08-22：D/Eを非表示（全利用側が空配列を正しく扱う設計）
   const areas=SITE.subAreaSets && SITE.subAreaSets.DE;
   if(!areas) return [];
   return areas.map(s=>({no:s.no, key:s.key, latlngs:deRegionLatLngs(s.key)}));
@@ -1492,7 +1498,9 @@ function priceSimGroups(){
   const abc=(SITE.subAreaSets && SITE.subAreaSets.ABC) || [];
   const groups=[{label:'ABC', items:abc}];
   if(subAreaVariant!=='ABC' && SITE.subAreaSets && SITE.subAreaSets[subAreaVariant]) groups.push({label:subAreaVariant, items:SITE.subAreaSets[subAreaVariant]});
-  if(SITE.subAreaSets && SITE.subAreaSets.DE) groups.push({label:'DE', items:SITE.subAreaSets.DE});
+  // 2026-08-22：ここは deSubAreaPolys() を経由しない生の SITE.subAreaSets.DE 直接参照だった
+  // （ヨコテン棚卸しで発見。放置するとSHOW_DE_REGIONS=falseでも価格シミュにDE行が残ってしまう）。
+  if(SHOW_DE_REGIONS && SITE.subAreaSets && SITE.subAreaSets.DE) groups.push({label:'DE', items:SITE.subAreaSets.DE});
   return groups;
 }
 // 変換済みの緯度経度ポリゴン(ll)に対して、FLAT_GRIDのセルから「使える面積(±thM以内)」を集計する
@@ -2060,6 +2068,9 @@ function drawSubAreaDE(){
    SITE_XFORM確定後（drawSite()の後）に呼ぶこと＝defaultDeRegionAdj()がSITE_XFORMを使うため。 */
 function updateDeExtentUI(){
   const wrap=document.getElementById('deExtentWrap');
+  // 2026-08-22：D/E専用の調整パネル（deCtrl_D/E・deAdjBtn_D/E・面積表示を含む）を丸ごと隠す。
+  // DOM自体は消さず、フラグを戻せば復活する（deSubAreaPolys()と同じ方針）。
+  if(!SHOW_DE_REGIONS){ if(wrap) wrap.style.display='none'; return; }
   const has=!!(SITE.subAreaSets && SITE.subAreaSets.DE);
   if(wrap) wrap.style.display=has?'block':'none';
   if(!has) return;
@@ -3759,9 +3770,12 @@ function cutFillBodyHTML(r){
 function areaSelectCheckboxesHTML(){
   if(!areaSelectState) areaSelectState=defaultAreaSelectState();
   const subs=currentSubAreas()||[];
+  // 2026-08-22：ここも deSubAreaPolys() を経由しない生の SITE.subAreaSets.DE 直接参照だった
+  // （ヨコテン棚卸しで発見。放置するとSHOW_DE_REGIONS=falseでも「敷地全体」チェックボックスに
+  // D/E行が残ってしまう）。
   const rows=[
     ...subs.map(s=>({key:s.no.split(/\s+/)[0]})),
-    ...(SITE.subAreaSets&&SITE.subAreaSets.DE ? [{key:'D'},{key:'E'}] : [])
+    ...(SHOW_DE_REGIONS && SITE.subAreaSets&&SITE.subAreaSets.DE ? [{key:'D'},{key:'E'}] : [])
   ];
   const rowsHtml=rows.map(r=>{
     const st=areaSelectState[r.key]||{low:false,high:false};
