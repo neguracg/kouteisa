@@ -1384,11 +1384,16 @@ function deSubAreaPolys(){
   if(!areas) return [];
   return areas.map(s=>({no:s.no, key:s.key, latlngs:deRegionLatLngs(s.key)}));
 }
+// 2026-08-22：上の段（FLAT_PLANES.high・購入シナリオC+D+E・目印点探索）を非表示にするための
+// 唯一のアクセサ。SITE.purchaseSetsを直接読んでいた全箇所をこれ経由に差し替える＝
+// deSubAreaPolys()と同じ「既存の『purchaseSetsを持たない物件』経路に乗せる」設計
+// （updatePlaneSelectUI()等が既に!!SITE.purchaseSetsで上の段UIを隠す分岐を持っている）。
+function sitePurchaseSets(){ return SHOW_UPPER_TIER ? SITE.purchaseSets : null; }
 // 購入シナリオkeyから、対象区画の{no,latlngs}配列を返す。ABC側はSITE_XFORM（shapeToLatLngs）、
 // D/E側はdeRegionLatLngs（区画ごとに独立調整）と、既存の変換の入口をそれぞれ再利用する
 // （新しい変換を作らない）。物件がpurchaseSetsを持たない・SITE_XFORM未確定なら空配列。
 function purchaseSetPolys(setKey){
-  const ps=SITE.purchaseSets && SITE.purchaseSets[setKey];
+  const ps=sitePurchaseSets() && sitePurchaseSets()[setKey];
   if(!ps || !SITE_XFORM) return [];
   const out=[];
   (ps.abc||[]).forEach(prefix=>{
@@ -1583,7 +1588,7 @@ function exportSitePlannerCSV(){
     });
   }
   let lowElev=null, highElev=null;
-  if(SITE.purchaseSets){
+  if(sitePurchaseSets()){
     lowElev = FLAT_PLANES.low ? FLAT_PLANES.low.elev : null;
     highElev = FLAT_PLANES.high ? FLAT_PLANES.high.elev : null;
     addLoops('low_50cm', lowElev);
@@ -1615,7 +1620,7 @@ function exportSitePlannerCSV(){
 #     _1,_2,...の連番で複数系列に分かれます。
 #   high_50cm_1, high_50cm_2,... = 上の段（基準標高${highElev!=null?highElev.toFixed(1)+'m':'未計算のため出力なし'}）の同上。
 #   flat_50cm_1, flat_50cm_2,... = 下の段/上の段の区別が無い物件（単一区画）で、現在の基準点
-#     （基準標高${(!SITE.purchaseSets&&lowElev!=null)?lowElev.toFixed(1)+'m':'—'}）を基準にした同上の境界線。
+#     （基準標高${(!sitePurchaseSets()&&lowElev!=null)?lowElev.toFixed(1)+'m':'—'}）を基準にした同上の境界線。
 # 2列目 seq: 同じdataset内での点の順番（0始まり）。
 # 3列目 x, 4列目 y: 上記座標系での位置（メートル）。
 #
@@ -2853,7 +2858,12 @@ function saveFlatPlanes(){ try{ localStorage.setItem(flatPlanesKey(), JSON.strin
 function loadFlatPlanes(){
   try{
     const v=JSON.parse(localStorage.getItem(flatPlanesKey()));
-    if(v && v.planes){ FLAT_PLANES=v.planes; ACTIVE_PLANE=v.active||'low'; return; }
+    // 2026-08-22：SHOW_UPPER_TIER=false中はACTIVE_PLANEを常に'low'に強制する（localStorageに
+    // 過去（上の段が現役だった頃）の active:'high' が残っていても、それを信じない）。信じてしまうと
+    // moveFlatRef()の`FLAT_PLANES[ACTIVE_PLANE]=...`書き戻しが地図クリックのたびに見えない
+    // FLAT_PLANES.high側へ書いてしまい、「下の段」の表示が地図クリックに追随しなくなる
+    // （FLAT_PLANES.high自体の値は書き換えず保持するのでlocalStorageの削除・クリアには当たらない）。
+    if(v && v.planes){ FLAT_PLANES=v.planes; ACTIVE_PLANE=SHOW_UPPER_TIER ? (v.active||'low') : 'low'; return; }
   }catch(e){}
   FLAT_PLANES={low:null, high:null}; ACTIVE_PLANE='low';
 }
@@ -2878,7 +2888,11 @@ function defaultAreaSelectState(){
     subs.forEach(s=>{
       const key=s.no.split(/\s+/)[0];
       const isMain=(key==='C区画' || key==='X区画');
-      state[key]={low:isMain, high:isMain};
+      // 2026-08-22：上の段(high)を非表示にする方針変更に伴い、既定チェックからも外す
+      // （SHOW_UPPER_TIER=falseの間はFLAT_PLANES.highが常にnullなので、trueのままでも
+      // チェックボックスはdisabledになり実害は無いはずだが、他の状態が誤ってFLAT_PLANES.high
+      // を参照する経路に紛れ込むのを防ぐため、既定値の時点で断つ）。
+      state[key]={low:isMain, high:SHOW_UPPER_TIER && isMain};
     });
   });
   if(!variantKeys.length && SITE.subAreas){   // 単一案のみの物件（将来拡張用。現状は使われない）
@@ -2902,6 +2916,7 @@ function toggleAreaSelect(key, tier, checked){
 }
 // 指定の面を地図の基準点(flatRef)に載せて再計算・再描画する（面の切替＝この1関数だけ）
 function activatePlane(which){
+  if(!SHOW_UPPER_TIER) which='low';   // 2026-08-22：呼び出し元が誤って'high'を渡しても常に低い面へ倒す
   const p=FLAT_PLANES[which];
   if(!p) return;
   ACTIVE_PLANE=which;
@@ -3779,10 +3794,12 @@ function areaSelectCheckboxesHTML(){
   ];
   const rowsHtml=rows.map(r=>{
     const st=areaSelectState[r.key]||{low:false,high:false};
+    // 2026-08-22：上の段(high)の列は非表示（SHOW_UPPER_TIER=false）。DOM自体を削るのではなく
+    // 文字列を組み立てないだけ＝フラグを戻せば元の2列表示に復帰する。
     return `<span style="display:inline-block;margin-right:14px;margin-bottom:4px">`
       + `<b style="font-size:12px;color:#e6edf3">${r.key}</b>　`
       + `<label style="font-size:12px;margin-right:8px;cursor:pointer"><input type="checkbox" ${st.low?'checked':''} ${FLAT_PLANES.low?'':'disabled'} onchange="toggleAreaSelect('${r.key}','low',this.checked)"> 下の段</label>`
-      + `<label style="font-size:12px;cursor:pointer"><input type="checkbox" ${st.high?'checked':''} ${FLAT_PLANES.high?'':'disabled'} onchange="toggleAreaSelect('${r.key}','high',this.checked)"> 上の段</label>`
+      + (SHOW_UPPER_TIER ? `<label style="font-size:12px;cursor:pointer"><input type="checkbox" ${st.high?'checked':''} ${FLAT_PLANES.high?'':'disabled'} onchange="toggleAreaSelect('${r.key}','high',this.checked)"> 上の段</label>` : '')
       + `</span>`;
   }).join('');
   return `<div class="hint" style="margin:2px 0 8px">下の「敷地全体」に含める区画・段を選ぶパラメータです（表示自体は選んだ区画・段の合計）：<br>${rowsHtml}</div>`;
@@ -3807,10 +3824,12 @@ function areaListTotalSectionHTML(){
   // 3枚のカード）と同じ場所に置くことで「敷地全体のためのパラメータ」だと一目で分かるようにする
   // （腱さん報告「このパラメーター設定の場所わかんない。これ敷地全体のパラメーター設定じゃん」＝
   // 旧位置は区画別の内訳より前で、区画別の内訳にも効くパラメータのように誤解されていた）。
+  // 2026-08-22：上の段(high)のカードは非表示（SHOW_UPPER_TIER=false）。tallySelectedAreasByTier('high')
+  // 自体は呼ばない＝計算コストも省く。
   return `<div style="margin-top:10px;padding:8px;background:#132436;border:1px solid #3b82f6;border-radius:8px">`
     + `<div style="font-weight:700;font-size:14px;color:#e6edf3;margin-bottom:6px">敷地全体（選んだ区画・段の合算値）</div>`
     + areaSelectCheckboxesHTML()
-    + tierCard('low') + tierCard('high')
+    + tierCard('low') + (SHOW_UPPER_TIER ? tierCard('high') : '')
     + regionCardHTML('合計', cutFillBodyHTML(tallySelectedAreas()), false)
     + `</div>`;
 }
@@ -4035,14 +4054,14 @@ function selectPlaneFocus(which){
 // 「使える面積(平ら+軽造成)が最大になる基準点を自動選択」ボタン（1つだけ）の実処理を、
 // 今どちらに注目しているか(planeFocusMode)で振り分ける文脈依存ボタン。
 function runPlaneMaximize(){
-  if(!SITE.purchaseSets || planeFocusMode==='low') optimizeFlatRef();
+  if(!sitePurchaseSets() || planeFocusMode==='low') optimizeFlatRef();
   else optimizePlaneForPurchaseSet('CDE');
 }
 // 「面の選択」ブロック本体の表示を、現在のFLAT_PLANES/planeFocusMode/cdeAnchorに同期する。
 // low/high選択ボタンは「まだ計算していない面」でも押せる（disabledにしない）＝高い面へ切り替えて
 // 初めて目印点コントロールに到達できる設計のため、計算前にボタンを封じると詰む（2026-08-20）。
 function updatePlaneSelectUI(){
-  const has=!!SITE.purchaseSets;
+  const has=!!sitePurchaseSets();
   const toggleWrap=document.getElementById('planeToggleWrap');
   if(toggleWrap) toggleWrap.style.display = has ? 'block' : 'none';
   if(has){
@@ -4068,7 +4087,7 @@ function updatePlaneSelectUI(){
 // 表示更新(updatePlaneSelectUI)を呼ぶ。物件切替のたびに呼ばれる（switchSite()参照）ほか、
 // drawFlat()の末尾からも毎回呼ばれる。
 function updatePlanesUI(){
-  const has=!!SITE.purchaseSets;
+  const has=!!sitePurchaseSets();
   if(!has){ cdeAnchor=null; drawCdeAnchor(); updatePlaneSelectUI(); return; }
   cdeAnchor=loadCdeAnchor();   // 2026-08-20追加：物件別に目印点を復元
   drawCdeAnchor();
