@@ -267,7 +267,7 @@
 
     <div class="card tool-flat edit-only">
       <h2>平坦度判定</h2>
-      <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#ff2d2d">赤い線</b>を地図に描画します。</div>
+      <div class="hint" style="margin-top:0">地図をクリックして「基準点（前面道路など）」を置く → 「平坦度を計算」。基準との高低差で敷地を色分けします。基準点は標高＝<b>面（等高線）</b>なので、同じ高さを結んだ<b style="color:#000">黒い線</b>を地図に描画します。</div>
       <div id="flatComputeBlock" style="margin-top:8px;padding:10px;background:#0f1720;border-radius:8px;border:1px solid #2a3542">
         <div class="params" style="grid-template-columns:1fr 1fr">
           <label>格子間隔(m)<input id="fGrid" type="text" inputmode="decimal" value="1" oninput="updateFlatComputeBtnState()"></label>
@@ -713,7 +713,7 @@ function updateKouzuToggleUI(){
 const siteLayer       = L.layerGroup().addTo(map);
 const siteHandleLayer = L.layerGroup().addTo(map);
 const cellLayer       = L.layerGroup().addTo(map);
-const bandLayer       = L.layerGroup().addTo(map);
+const bandLayer       = L.featureGroup().addTo(map);   // 2026-08-22：平坦度タブに重ねた時にbringToFront()できるようlayerGroupから変更（drawFlat()参照）
 const selLayer        = L.layerGroup().addTo(map);
 const measureLayer  = L.layerGroup().addTo(map);
 const cliffLayer    = L.layerGroup().addTo(map);
@@ -745,7 +745,7 @@ function legacyLegendHTML(){
     `<span style="color:${FLAT_COLORS.grade}">■</span>±${gradeCm}cm 軽い造成で可<br>`+
     `<span style="color:${FLAT_COLORS.steep}">■</span>±${steepCm}cm 要造成<br>`+
     `<span style="color:${FLAT_COLORS.over}">■</span>それ以上 傾斜地<br>`+
-    `<span style="color:#ff2d2d">―</span>赤太線＝基準ライン（基準点と同じ標高）`;
+    `<span style="color:#000">―</span>黒太線＝基準ライン（基準点と同じ標高）`;
 }
 function cutFillLegendHTML(){
   const rows=CUTFILL_BAND_LABELS.map((label,i)=>{
@@ -753,7 +753,7 @@ function cutFillLegendHTML(){
     return `<span style="color:${CUTFILL_COLORS[i]}">■</span>${rangeTxt} ${label}<br>`;
   }).join('');
   return `<b>平坦度 凡例（切土/盛土は色を区別せず高低差のみ）</b><br>${rows}`+
-    `<span style="color:#ff2d2d">―</span>赤太線＝基準ライン（この線を挟んで切土/盛土のバッジを表示）<br>`+
+    `<span style="color:#000">―</span>黒太線＝基準ライン（この線を挟んで切土/盛土のバッジを表示）<br>`+
     `<span style="color:#0d7a37;font-weight:700">━</span>緑太線＝50cm境界（重要）`;
 }
 function updateFlatLegend(){ if(flatLegendDiv) flatLegendDiv.innerHTML=flatLegendHTML(); }
@@ -3142,7 +3142,7 @@ function applyDeSplitPercent(pctE){
   if(best && best.cell){
     flatRef={lat:best.cell.lat, lon:best.cell.lon, elev:best.cell.elev, hsrc:flatRef?flatRef.hsrc:null};
     drawFlatRef(); saveFlatRef();
-    recomputeFlatOnly();   // dh再計算＋drawFlat()（区画別表・色分け・赤い基準ラインまで全部反映）
+    recomputeFlatOnly();   // dh再計算＋drawFlat()（区画別表・色分け・黒い基準ラインまで全部反映）
     if(prog) prog.textContent=`X=${pctE.toFixed(1)}% → 基準標高${best.cell.elev.toFixed(1)}m でX区画の使える面積 約${best.area.toFixed(0)}㎡（${(best.area/3.305785).toFixed(1)}坪）が最大`;
   }else if(prog){ prog.textContent=`X=${pctE.toFixed(1)}%（X区画内に有効な標高データがありません）`; }
   return r;
@@ -3375,6 +3375,11 @@ function drawFlat(){
   renderPriceSim();   // 使える面積比の試算は基準点変更のたびに追従
   updateFlatComputeBtnState();
   updatePlanesUI();
+  // 2026-08-22：drawFlat()はセル色分けをflatLayerへ再描画するたびに新しい要素を地図の一番上に積む。
+  // showCliffOnFlatで重ねているbandLayer（崖の2H影響ライン）は先に地図へ追加済みのため、閾値スライダー等の
+  // 操作でdrawFlat()が再実行されるたびに色分けの下に埋もれてしまう（腱さん指摘「緑とか青に紛れて見えない」）。
+  // 呼び出し箇所ごとに直すのではなく、この関数の最後で毎回描き直すことで再発を防ぐ（同じ知識を1箇所に）。
+  if(showCliffOnFlat && map.hasLayer(bandLayer)) bandLayer.bringToFront();
 }
 
 /* 素朴なmarching squares：格子セル4隅の値とレベルの符号からエッジ交点を求めて線分化 */
@@ -3494,7 +3499,7 @@ function drawFlatContours(){
     if(!segs.length) return;
     const isZero=Math.abs(lvl)<1e-9;   // dh=0＝基準点と同じ標高を結んだ等高線＝「基準ライン」
     const isMeter=Math.abs(Math.round(lvl)-lvl)<1e-6;   // 1mごとのレベル線
-    const color=isZero?'#ff2d2d':'#8fa3b8';
+    const color=isZero?'#000000':'#8fa3b8';
     const weight=isZero?4:1;
     const paths=joinSegments(segs);
     paths.forEach(path=>{
@@ -3817,7 +3822,7 @@ function computeFlatAreasCutFill(el){
       + regionCardHTML('敷地全体', cutFillBodyHTML(all), true);   // 単一区画の物件：既存のまま無変更
   }
   html+=`<div style="margin-top:6px">`+
-    `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#ff2d2d">赤い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
+    `色は切土/盛土で区別せず高低差のみ（段階が濃いほど大きく、100cm超は連続グラデーション）。地図上は<span style="color:#000">黒い基準ライン</span>付近に<b>切土</b>／<b>盛土</b>のバッジを1個ずつ表示、<b style="color:#0d7a37">緑の太線</b>が50cm境界（最重要）です。<br>`+
     `<span class="src">土量は基準面との標高差×格子面積の単純合計による概算です。法面形状・締固め・場外搬出入は考慮していません。切土/盛土量の差引は良否判定に使わず、規模の目安としてご確認ください。`
     + `${hsrcNoteText()}。細かな段差・擁壁は反映されません。正式には現地測量が必要です。</span></div>`;
   el.style.display='block';
