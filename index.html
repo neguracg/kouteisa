@@ -584,6 +584,12 @@ let SHARED_STRIPS = null; // 共有URLから渡された2Hライン（崖上・�
 let SHARED_STRIPS2 = null; // 共有URLから渡された2Hライン（崖下・シアン／両崖物件）
 let SHARED_SINGLE_SECTION = false; // 共有URLが2H影響帯を含まない単一断面（測線1本）かどうか
 
+/* 2026-08-22 方針変更：上の段はがけの影響で使えないため非表示にする（腱さん指示）。
+   D/E（隣接2筆）も「基本なかったこと」にする。コードは消さずフラグで殺しているだけなので、
+   復活させたい時はこの2行をtrueに戻す。上の段ありの当時の姿は joukan_20260822.html（凍結版）。 */
+const SHOW_UPPER_TIER = false;   // 上の段（FLAT_PLANES.high・購入シナリオC+D+E・目印点探索）
+const SHOW_DE_REGIONS = false;   // D/E区画（実在の隣接2筆 1170-1・1404-4）
+
 /* ====== 地図 ====== */
 const map = L.map('map',{maxZoom:22}).setView([35.0933, 138.9554], 19);
 const std   = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxNativeZoom:18,maxZoom:22,attribution:"地理院タイル"});
