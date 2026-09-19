@@ -11,4 +11,5 @@ logs/
 data/*
 !data/hirai_elev_g1.json
 !data/hirai_kouzu_pink.png
+!data/negura_kouzu.png
 _input/
