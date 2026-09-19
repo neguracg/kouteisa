@@ -2283,6 +2283,19 @@ function switchSite(id){
     const ctrl=document.getElementById('deCtrl_'+region); if(ctrl) ctrl.style.display='none';
   });
   deHandleLayer.clearLayers();
+  // 2026-09-19：「敷地を調整」モードそのものも物件ごとの状態。すぐ上のD/E個別調整(deAdjustMode)と
+  // updateKouzuToggleUI()のkouzuAdjustModeは同じ理由で既にリセット済みだったのに、siteAdjustModeだけが
+  // 漏れていた（同じ「switchSite()がリセットし忘れる」機構＝DESIGN.md §9 の4件目）。調整中のまま物件を
+  // 切り替えると、新物件の敷地ポリゴンがいきなりドラッグ可能・参照地番の破線つきで出てしまい、
+  // 誤ドラッグで新物件の配置が壊れてlocalStorageへ自動保存される（＝D/Eで警戒したのと同じ事故）。
+  // drawSite()より前に置くこと（drawSiteRefs()がこのフラグを見る）。
+  siteAdjustMode=false;
+  const sAdjBtn=document.getElementById('siteAdjBtn'); if(sAdjBtn) sAdjBtn.textContent='敷地を調整';
+  const sAdjCtrl=document.getElementById('siteCtrl'); if(sAdjCtrl) sAdjCtrl.style.display='none';
+  siteRefLayer.clearLayers(); map.removeLayer(siteRefLayer);
+  // ヨコテン：📏距離計測の描かれた実測線も前物件のものが地図に残っていた（同じ機構）。
+  // 道具の武装状態(measureActive)はタブ・物件を横断する道具なので維持し、描画だけを消す。
+  clearMeasure();
   // D/E面積表示パネル：SITE_XFORM確定後（上のbuildSite()の後）に呼ぶこと。物件ごとに有無が違うので
   // 表示/非表示を切り替える。updateSubAreaToggleUI()（#deAccuracyHintの文言を
   // SITE.subAreaSets.DEから生成する）より前に置き、新物件の値が確定してから読ませる。
