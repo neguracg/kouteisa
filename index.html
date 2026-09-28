@@ -256,6 +256,7 @@
       </div>
       <div style="margin-top:8px"><button class="primary" style="width:100%" onclick="generateBand()">2H影響帯を生成</button></div>
       <div style="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap">
+        <button class="small" id="bandLoadBtn" onclick="loadBandAuto()">📥 保存済みの帯を呼び出す</button>
         <button class="small" onclick="shareURL()">共有URLを発行</button>
         <button class="small" onclick="exportCliffBandCSV()">📤 2H帯をCSV出力（SitePlanner用）</button>
         <button class="small" onclick="exportCliffBandImage()">🖼️ 2H影響帯を画像で保存</button>
@@ -888,9 +889,11 @@ function updateCliffOverlayBtnUI(){
   b.textContent = showCliffOnFlat ? '🗻 2H影響ラインを非表示' : '🗻 2H影響ラインを重ねる';
 }
 function toggleCliffOverlayOnFlat(){
+  // 消込表#266：現在の表示にまだ帯が無ければ、まず物件別の自動保存から復元を試みる
+  // （2026-08-22腱さん要望「がけタブで1回生成したら保存して、平坦度タブでいつでも呼び出せるように」）。
+  // 保存も無ければloadBandAuto()内でアラート済みなのでここでは何もしない（二重アラート防止）。
   if(!showCliffOnFlat && !BAND_STRIPS.some(s=>s.base||s.cyan)){
-    alert('先に「がけ」タブで「2H影響帯を生成」を実行してください。');
-    return;
+    if(!loadBandAuto()) return;
   }
   showCliffOnFlat=!showCliffOnFlat;
   if(TOOL==='flat'){ if(showCliffOnFlat) map.addLayer(bandLayer); else map.removeLayer(bandLayer); }
@@ -2481,6 +2484,7 @@ async function generateBand(){
     const rc=BAND_STRIPS.filter(s=>s.base).length, cc=BAND_STRIPS.filter(s=>s.cyan).length;
     if(prog) prog.textContent=`完了：崖上(赤)${rc}本・崖下(シアン)${cc}本 検出${useRefLine?'（基準線に直交）':''}`;
     drawCellsAndAreas(toEN,toLL,cLat,cLon);
+    saveBandAuto();   // 消込表#266：生成完了時に物件別へ自動保存（最新1個）
     return;
   }
   /* ===== 単崖モード（2026-08-21 再設計：敷地の両側を別々に検出する） =====
@@ -2575,6 +2579,7 @@ async function generateBand(){
   const rc2=BAND_STRIPS.filter(s=>s.base).length, cc2=BAND_STRIPS.filter(s=>s.cyan).length;
   if(prog) prog.textContent=`完了：崖上(赤)${rc2}本・崖下(シアン)${cc2}本 検出（全${cnt}断面）${useRefLine?'（基準線に直交）':''}`;
   drawCellsAndAreas(toEN,toLL,cLat,cLon);
+  saveBandAuto();   // 消込表#266：生成完了時に物件別へ自動保存（最新1個）
 }
 /* 敷地格子の使用可否を着色＋面積ラベル（生成・共有で共通） */
 function drawCellsAndAreas(toEN,toLL,cLat,cLon){
@@ -2745,6 +2750,59 @@ function buildSharedBand(){
   drawBand();
   drawCellsAndAreas(toEN,toLL,cLat,cLon);
   BAND_DONE=true;
+  return true;
+}
+/* ====== 2H影響帯の自動保存・呼び出し（消込表#266 第1段階） ======
+   「1物件につき常に最新の1個を自動保存」。generateBand()が検出に成功して完了した時だけ、
+   帯の形（崖ヘリ点→2H到達点の座標ペア、shareURL()のL/L2と同じ形式）・向き・生成日時・
+   検出本数を物件別にlocalStorageへ書く。キーの作り方はflatPlanesKey()/refLineKey()と同じ
+   'kouteisa_<機能>_'+CURRENT_SITE パターンを踏襲（DESIGN.md §7の「本体とjoukan_20260822.htmlは
+   localStorageを共有する」制約により、削除・クリア処理は追加しない＝上書きのみ）。
+   復元は「共有URLから渡された2Hラインをそのまま描画する」既存の入口buildSharedBand()を、
+   URLの代わりにこの保存データで動かすだけ（SHARED_STRIPS/SHARED_STRIPS2を一時的に借用）。
+   名前付きの複数保存（測線パターンを比較したい、という本来の要望）は次段階。 */
+function bandAutoKey(){ return 'kouteisa_bandauto_'+CURRENT_SITE; }
+function saveBandAuto(){
+  const redOK=BAND_STRIPS.filter(s=>s.base), cyanOK=BAND_STRIPS.filter(s=>s.cyan);
+  if(redOK.length<2 && cyanOK.length<2) return;   // 検出不足（未成立の結果）は保存しない。shareURL()と同じ基準
+  const useRefLine=!!(REF_LINE.a && REF_LINE.b);
+  // 表示用の向きラベル。generateBand()自体はplaced(=ユーザーが地図で明示的に置いたか)を見ず
+  // POINTS.top/bottomの座標を無条件に方向ベクトルとして使う（!useRefLineの時）ため、ラベルも
+  // 同じ基準（placedを問わない）で常に方位を出す。ここをplaced判定にすると、初期値のまま
+  // 生成した時に方位が出ず'測線の向き'という無情報な文字列になる（実機検証で発見・修正）。
+  // bearingRad()はatan2の素の値（-180〜180°）を返すため、表示用に0〜359°の方位表記へ正規化する
+  const brngDeg=((Math.round(deg(bearingRad(POINTS.top,POINTS.bottom)))%360)+360)%360;
+  const dirLabel = useRefLine ? '基準線に直交' : `測線 方位${brngDeg}°`;
+  const L =  redOK.length>=2  ? redOK.map(s=>[+s.base.lat.toFixed(6),+s.base.lon.toFixed(6),+s.reach.lat.toFixed(6),+s.reach.lon.toFixed(6)]) : [];
+  const L2 = cyanOK.length>=2 ? cyanOK.map(s=>[+s.cyan.base.lat.toFixed(6),+s.cyan.base.lon.toFixed(6),+s.cyan.reach.lat.toFixed(6),+s.cyan.reach.lon.toFixed(6)]) : [];
+  // redCount/cyanCountはL/L2そのものの本数から取る（redOK.length等の生カウントだと、shareURL()と
+  // 同じ「孤立1件はそもそも保存しない」ゲートにより実際は0件保存なのに"1本"とラベルへ出る食い違いが
+  // 起きうる。実装時のレビューで発見・修正）。
+  const rec={ L, L2, dirLabel, savedAt:new Date().toISOString(), redCount:L.length, cyanCount:L2.length };
+  try{ localStorage.setItem(bandAutoKey(), JSON.stringify(rec)); }catch(e){}
+}
+function bandAutoLabel(rec){
+  const d=new Date(rec.savedAt);
+  const ds=isNaN(d) ? '' : `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  return `${ds} 生成・${rec.dirLabel}・崖上${rec.redCount||0}本/崖下${rec.cyanCount||0}本`;
+}
+/* 保存済みの帯を復元。呼び出し元（がけタブのボタン／平坦度タブのtoggleCliffOverlayOnFlat()）を
+   問わず同じ経路。成功時true・失敗時アラートを出してfalse（呼び出し側で二重アラートしなくて済む）。 */
+function loadBandAuto(){
+  let rec=null;
+  try{ rec=JSON.parse(localStorage.getItem(bandAutoKey())); }catch(e){}
+  if(!rec || ((!rec.L||!rec.L.length) && (!rec.L2||!rec.L2.length))){
+    alert('保存された2H影響帯がありません。先に「がけ」タブで「2H影響帯を生成」を実行してください。');
+    return false;
+  }
+  SHARED_STRIPS = (rec.L && rec.L.length) ? rec.L : null;
+  SHARED_STRIPS2 = (rec.L2 && rec.L2.length) ? rec.L2 : null;
+  const ok=buildSharedBand();
+  SHARED_STRIPS=null; SHARED_STRIPS2=null;   // 共有URL経路の変数を一時的に借用しただけなので使用後は戻す
+  if(!ok){ alert('保存済みの2H影響帯の復元に失敗しました（先に敷地を配置してください）。'); return false; }
+  const prog=document.getElementById('bandProg'); if(prog) prog.textContent=`保存済みの帯を復元：${bandAutoLabel(rec)}`;
+  const el=document.getElementById('bandResult');
+  if(el) el.innerHTML = `<b>💾 保存済みの2H影響帯を復元しました（${bandAutoLabel(rec)}）。</b><br>` + el.innerHTML;
   return true;
 }
 
