@@ -1249,9 +1249,11 @@ const SITES = {
             // XY案の分割線の向き（A/B境界の実測ベクトル。B/C境界とも実測差0.12°でほぼ同一直線）。
             // splitSiteByPercent()がこの向きに平行な線で任意の%に敷地を切る（_input/Hirai1298/build_split2.py参照）
             splitAxis:{ux:0.7155859614, uy:-0.6985246824},
-            // 標高グリッドの事前キャッシュ（_input/Hirai1298/fetch_elev_cache.py で一度だけオフライン取得）。
-            // g・adjが一致する時だけgenerateFlat()がこれを使い、毎回のライブAPI取得を省略する
-            // （不一致・取得失敗時は既存のライブfetchOne()ループへ自動フォールバック。他物件は対象外）。
+            // 標高グリッドの事前キャッシュ（_input/Hirai1298/fetch_elev_cache.py で一度だけオフライン取得・format 1）。
+            // generateFlat()内のloadElevCacheGrid()が、格子間隔gが同じで今の必要範囲を含んでいる時だけこれを使い、
+            // 今の敷地の座標系へ投影して必要範囲を切り出す（毎回のライブAPI取得を省略）。敷地の位置・角度・倍率
+            // (siteAdj)には依存しない（2026-10-08〜）。範囲外・取得失敗時は既存のライブfetchOne()ループへ自動フォールバック。
+            // adj は生成時の敷地配置の【記録】であって判定には使わない（消さずに残してある）。
             elevCache:{url:'data/hirai_elev_g1.json', g:1, adj:{lat:35.0939428, lon:138.9677039, rot:0, scale:1}},
             // 公図（腱さんが平井1170-4公図.pdfからピンクの手描き線だけを抽出・背景透過で切り抜いた画像、
             // data/hirai_kouzu_pink.png、1101×1630px）。2026-08-19：ノイズだらけのフルスキャン画像
@@ -1273,14 +1275,14 @@ const SITES = {
             // 【縮尺】_input/negura/面積メモ.txt の総計 **21,004㎡** を「倍率1.0」の正とする（2026-09-20 腱さん指示）。
             //   トレース形状との整合は良い：メモの各筆から個別に逆算した公図1pxの実寸が0.105〜0.126mに収まり、
             //   澤田さん7筆の合計からは0.11205m、外周全体からは0.11198mと0.1%以内で一致する＝**形は合っている**。
-            // 【⚠ 未解消の食い違い】航空写真合わせで独立に出した値は0.09645m/px（＝15,582㎡）で、
-            //   メモ基準はその1.161倍（面積1.35倍）。根拠は①公図→「航空写真+公図」印刷物の写真への
-            //   数値最適化（scale 0.725。0.66〜0.80の走査で0.72〜0.73に鋭い単峰・0.80ではスコアが14.6まで低下）
-            //   →②その写真を地理院オルソへソーラー発電所3隅＋円形タンクの4点で最小二乗（0.13304m/px・残差0.6〜2.4m）。
-            //   つまり**地面の実測はメモより2〜3割小さい**（山林の公簿面積にはよくある食い違い）。腱さんの指示で
-            //   メモを採ったが差は残っており、**航空写真に重ねると敷地が1割強はみ出して見えるのはこのため**。
-            //   地積測量図・実測図が手に入ったら再検討すること。位置・角度・倍率の最終調整は腱さんが
-            //   「敷地を調整」「公図を調整」で行う前提。
+            // 【公簿と実測の差（了承済み）】面積メモは登記簿（公簿）の地積と確認済み（2026-10-08 腱さん）。
+            //   航空写真から測った地面の実寸は0.09645m/px（＝15,582㎡）で、公簿はその1.161倍（面積1.35倍）。
+            //   この差は山林によくある公簿と実測の差として了承済み。**倍率1.0＝公簿**で、航空写真に合わせて倍率を
+            //   下げると表示面積も実測寄りに変わる（航空写真に重ねると敷地が1割強はみ出して見えるのはこのため）。
+            //   実測の根拠は①公図→「航空写真+公図」印刷物の写真への数値最適化（scale 0.725。0.66〜0.80の走査で
+            //   0.72〜0.73に鋭い単峰・0.80ではスコアが14.6まで低下）→②その写真を地理院オルソへソーラー発電所
+            //   3隅＋円形タンクの4点で最小二乗（0.13304m/px・残差0.6〜2.4m）。つまり**地面の実測はメモより2〜3割
+            //   小さい**。位置・角度・倍率の最終調整は腱さんが「敷地を調整」「公図を調整」で行う前提。
             // 【向き】公図の紙は真北から13.97°時計回りに傾いている（上記①②の回転11.2°+2.77°）。
             shape:[[-119.14,-25.24],[-119.40,-25.12],[-120.28,-14.28],[-121.43,-14.05],[-123.24,-15.05],[-124.01,-7.47],[-123.01,-1.60],[-119.27,5.09],[-108.20,19.41],[-102.45,23.98],[-100.16,25.08],[-99.22,24.91],[-85.14,38.83],[-63.92,59.17],[-61.86,61.43],[-52.00,67.45],[-43.31,68.99],[-39.67,69.23],[-25.16,66.32],[0.41,59.15],[3.61,58.58],[14.45,58.08],[30.01,55.25],[52.39,56.60],[87.27,53.47],[101.59,50.25],[111.04,47.90],[111.35,47.53],[124.36,-22.64],[128.22,-45.64],[130.93,-59.35],[130.83,-59.50],[121.67,-55.49],[109.36,-50.70],[103.98,-48.20],[99.12,-46.42],[82.19,-39.32],[79.83,-38.62],[49.92,-37.29],[48.73,-37.00],[47.64,-37.19],[41.69,-36.98],[29.17,-35.82],[13.71,-34.86],[12.52,-34.57],[11.11,-34.68],[-12.47,-32.97],[-15.13,-32.53],[-15.30,-32.72],[-40.12,-30.93],[-43.25,-30.50]], twoSided:false,
             // 内訳の10筆（「敷地を調整」モード中だけ破線表示）。面積は面積メモ.txtの実数。
@@ -1297,6 +1299,10 @@ const SITES = {
               {no:'1689-62 澤田 472㎡', pts:[[125.9,-57.4],[121.7,-55.6],[105.1,36.9],[103.0,48.9],[103.0,49.5],[103.2,49.8],[106.9,48.9],[107.0,48.6],[109.6,33.0],[121.0,-28.3]]},
               {no:'1689-63 澤田 495㎡', pts:[[130.8,-59.5],[126.6,-57.6],[122.0,-30.4],[110.2,33.1],[107.6,48.8],[111.0,47.9],[111.6,46.3],[117.4,15.6],[118.5,8.1],[120.0,0.8],[120.7,-3.6],[124.4,-22.6],[127.8,-43.5]]}
             ],
+            // 標高グリッドの事前キャッシュ（format 2＝素の緯度経度グリッド。生成は tools/negura/fetch_elev_cache.py）。
+            // 範囲は「敷地bbox＋アプリのmargin 8m＋微調整の余裕25m」。「敷地を調整」でこの範囲内に動かす限り
+            // loadElevCacheGrid()が再取得なしで使える（adj は不要＝敷地の位置・角度・倍率に依存しない）。範囲外はライブ取得へ落ちる。
+            elevCache:{url:'data/negura_elev_g1.json', g:1},
             // 公図オーバーレイ（data/negura_kouzu.png ＝公図から筆界線だけを抜いた背景透過画像）。
             // basePxScale は上の縮尺と同じ値にすること（ずらすと敷地ポリゴンと公図がぴったり重ならなくなる）。
             // baseRot は「公図の紙が真北からどれだけ傾いているか」の初期値（負が時計回り。未指定の物件は0）。
@@ -3362,6 +3368,75 @@ function applyDeTargetUsable(){
   applyDeSplitPercent(pctFinal, targetElev);
 }
 
+/* ====== 標高の事前キャッシュ（SITE.elevCache）の読み込みと切り出し ======
+   @owns 標高の事前キャッシュの有効判定・今の敷地座標系への投影・必要範囲の切り出し（generateFlat()から呼ぶ唯一の入口）
+   有効判定は「格子間隔gが同じ」＋「今の必要範囲(eMin〜eMax, nMin〜nMax)をキャッシュ格子が空間的に含む」の2つだけ。
+   キャッシュの各点は絶対的な緯度経度を持つので、敷地の位置・角度・倍率(siteAdj)には依存しない
+   （2026-10-08・課題#635。以前はsiteAdjの完全一致も要求しており、「敷地を調整」で1回動かすと無効になった）。
+   2つの形式を受け付け、読み込み時に同じ形(lat0,lon0,dLat,dLon,cols,rows,elev[])へ読み替えて同じ処理を通す。
+   どちらもrow-major（点(r,c)＝elev[r*cols+c]）・r=0が南端・c=0が西端・点(r,c)の緯度経度は lat0+r*dLat, lon0+c*dLon:
+     format 1（平井）{g,cLat,cLon,eMin,nMin,cols,rows,cells:[{e,n,lat,lon,elev}]}
+     format 2（negura・新規はこちら）{format:2,g,lat0,lon0,dLat,dLon,cols,rows,elev:[...]}（nullは欠測）
+   返り値: FLAT_GRIDと同じ形 {g,cols,rows,en0,cLat,cLon,cells}。cellsはライブ取得と同じrow-major
+   （消費側のtraceMaskOutline()・marchingSquaresLevel()等はen0+g刻みの等間隔格子をcells[r*cols+c]で読む）。
+   切り出すのは必要範囲だけ（キャッシュ全体ではない）。dhは未設定(null)＝呼び出し側がライブ経路と同じ後処理で埋める。
+   使えない時（範囲外・格子間隔違い・取得失敗・形式不正）はnull＝呼び出し側は従来のライブ取得へ進む。理由はconsoleに残す。
+   ※名前の罠: fetchOne()の直前の `const elevCache=new Map()` はAPI結果のメモ化で、この事前キャッシュとは別物。 */
+async function loadElevCacheGrid(ec, g, cLat, cLon, eMin, eMax, nMin, nMax){
+  if(!ec) return null;
+  const skip=(why, warn)=>{ (warn?console.warn:console.info)(`elevCache: 不使用（${why}）→ライブ取得へ`); return null; };
+  if(g!==ec.g) return skip(`格子間隔${g}m≠キャッシュの${ec.g}m`);
+  try{
+    const resp=await fetch(ec.url);
+    if(!resp.ok) throw new Error('http '+resp.status);
+    const j=await resp.json();
+    if(!j || j.g!==g) return skip('ファイル内の格子間隔が一致しない', true);
+    // --- 2つの形式を同じ形へ読み替える ---
+    let lat0,lon0,dLat,dLon,cols,rows,elev;
+    if(j.format===2){
+      ({lat0,lon0,dLat,dLon,cols,rows}=j);
+      elev=j.elev;
+    }else{   // format 1: 格子上でlat/lonは線形なので、先頭セル・隣のセルから原点と刻みを読み替える
+      cols=j.cols; rows=j.rows;
+      lat0=j.cells[0].lat; lon0=j.cells[0].lon;
+      dLat=j.cells[cols].lat-lat0; dLon=j.cells[1].lon-lon0;
+      elev=j.cells.map(c=>c.elev);
+    }
+    if(!(cols>=2 && rows>=2 && dLat>0 && dLon>0 && Number.isFinite(lat0) && Number.isFinite(lon0) &&
+         Array.isArray(elev) && elev.length===cols*rows)) return skip('キャッシュの形式が不正', true);
+    // --- 今の敷地の座標系(cLat/cLon中心のEN[m]。generateFlat()と同じmLat/mLon)へ投影 ---
+    const mLat=111320, mLon=111320*Math.cos(rad(cLat));
+    const E0=(lon0-cLon)*mLon, N0=(lat0-cLat)*mLat, gE=dLon*mLon, gN=dLat*mLat;
+    // --- 包含判定：キャッシュ格子が今の必要範囲を覆っていなければ使わない ---
+    const EPS=1e-6;
+    const eEnd=E0+(cols-1)*gE, nEnd=N0+(rows-1)*gN;
+    if(!(E0<=eMin+EPS && eEnd>=eMax-EPS && N0<=nMin+EPS && nEnd>=nMax-EPS)){
+      const f=x=>x.toFixed(1);
+      return skip(`範囲外：必要 e[${f(eMin)},${f(eMax)}] n[${f(nMin)},${f(nMax)}]／キャッシュ e[${f(E0)},${f(eEnd)}] n[${f(N0)},${f(nEnd)}]`);
+    }
+    // --- 必要範囲だけを切り出す（外側ループr・内側ループc＝ライブ取得と同じrow-major）。
+    //     浮動小数の誤差でE0が eMin±1e-14 になりfloorが-1を返しうるので、0〜cols-1/rows-1へクランプする ---
+    const c0=Math.max(0,Math.floor((eMin-E0)/gE)), c1=Math.min(cols-1,Math.ceil((eMax-E0)/gE));
+    const r0=Math.max(0,Math.floor((nMin-N0)/gN)), r1=Math.min(rows-1,Math.ceil((nMax-N0)/gN));
+    const outCols=c1-c0+1, outRows=r1-r0+1;
+    const cells=new Array(outCols*outRows);
+    let k=0;
+    for(let r=r0;r<=r1;r++){
+      const n=N0+r*gN, lat=lat0+r*dLat;
+      for(let c=c0;c<=c1;c++){
+        const v=elev[r*cols+c];
+        cells[k++]={e:E0+c*gE, n, lat, lon:lon0+c*dLon, elev:(v==null)?null:v, dh:null};
+      }
+    }
+    console.info(`elevCache: 使用（${cols}x${rows}から${outCols}x${outRows}を切り出し）`);
+    // gEはgと1e-5程度（1m格子で数mm）しか違わないので、FLAT_GRID.gは公称のgのままでよい。
+    return {g, cols:outCols, rows:outRows, en0:{e:E0+c0*gE, n:N0+r0*gN}, cLat, cLon, cells};
+  }catch(e){
+    // 取得失敗（404・ネットワークエラー・JSON不正等）→ ライブ取得へフォールバック
+    return skip(`読み込み失敗: ${(e&&e.message)||e}`, true);
+  }
+}
+
 async function generateFlat(){
   if(!flatRef){ alert('先に基準点（道路）を地図でクリックしてください。'); return; }
   if(flatRef.elev==null){ alert('基準点の標高が未取得です。基準点をクリックし直してください。'); return; }
@@ -3379,50 +3454,30 @@ async function generateFlat(){
   // D/E（隣接筆）を持つ物件は、グリッド範囲をD/Eの外周まで広げる（腱さん指示 2026-08-19
   // 「平坦度の計算をもうちょっと川沿いまでやりたい」。D/Eのセルも同じopacity減で薄く塗られ、
   // 「隣接筆（D/E）」の区画別集計が実データで埋まるようになる）。
-  // ※この拡張は事前キャッシュ(data/hirai_elev_g1.json)のcols/rows/eMin/nMin照合条件に効くため、
-  //   _input/Hirai1298/fetch_elev_cache.py にも同じ拡張を入れて再生成してある（両者は1行1行対応）。
+  // ※この拡張で必要範囲(eMin〜nMax)が広がるので、事前キャッシュ(data/hirai_elev_g1.json)がその範囲を
+  //   覆っていないとloadElevCacheGrid()が使えずライブ取得へ落ちる。平井のキャッシュ(_input/Hirai1298/
+  //   fetch_elev_cache.py)はD/Eを1.6倍に広げた範囲で生成してある（コードと1行1行対応させる必要は無く、
+  //   必要範囲を「覆っていれば足りる」。西・南側にはD/E分の余裕が無い＝そちらへ動かすとライブ取得に落ちる）。
   deSubAreaPolys().forEach(s=> s.latlngs.forEach(p=> sEN.push({e:(p.lon-cLon)*mLon, n:(p.lat-cLat)*mLat})));
   const margin=8;
   const eMin=Math.min(...sEN.map(p=>p.e))-margin, eMax=Math.max(...sEN.map(p=>p.e))+margin;
   const nMin=Math.min(...sEN.map(p=>p.n))-margin, nMax=Math.max(...sEN.map(p=>p.n))+margin;
   const prog=document.getElementById('flatProg');
   let cols=Math.floor((eMax-eMin)/g)+1, rows=Math.floor((nMax-nMin)/g)+1;
-  // 事前キャッシュ優先読み込み（SITE.elevCacheを持つ物件＝今は平井のみ対象）。
-  // 格子間隔・敷地配置(siteAdj)がキャッシュ生成時と一致する場合だけ使い、ライブ取得ループを丸ごとスキップする。
-  // 取得失敗・不一致（他物件・キャッシュ未整備・調整済みの平井 等）は何もせず下の通常ルートへ素通りする
-  // （＝既存のライブ取得ロジックには一切手を加えていない。回帰リスクゼロを最優先）。
-  const ec=SITE.elevCache;
-  if(ec && g===ec.g &&
-     Math.abs(siteAdj.lat-ec.adj.lat)<1e-9 && Math.abs(siteAdj.lon-ec.adj.lon)<1e-9 &&
-     Math.abs(siteAdj.rot-ec.adj.rot)<1e-9 && Math.abs(siteAdj.scale-ec.adj.scale)<1e-9){
-    try{
-      const r=await fetch(ec.url);
-      if(!r.ok) throw new Error('cache http '+r.status);
-      const j=await r.json();
-      // 2026-08-20：完全一致(cols/rows/eMin/nMinがぴったり同じ)ではなく「キャッシュ格子が今必要な範囲を
-      // 包含しているか」に緩和した。D/E個別調整(deRegionAdj)で必要範囲がわずかに動いても、
-      // 事前キャッシュ生成時に余裕を持たせてあれば引き続きヒットする（腱さん指摘「保存して毎回計らせないで」）。
-      // キャッシュの方が今の必要範囲より広い分には、pointInLLPoly等の判定は無害に多くのセルを走査するだけ。
-      const EPS=1e-6;
-      const cacheEMax=j.eMin+(j.cols-1)*j.g, cacheNMax=j.nMin+(j.rows-1)*j.g;
-      const contains = j && Array.isArray(j.cells) && j.g===g &&
-        j.eMin<=eMin+EPS && cacheEMax>=eMax-EPS && j.nMin<=nMin+EPS && cacheNMax>=nMax-EPS;
-      if(contains){
-        // キャッシュ側の格子（cols/rows/eMin/nMin）をそのまま採用する。今回計算したeMin/eMax等より
-        // 広い範囲を含むが、cLat/cLonはsiteAdjだけに依存し今回の値と一致するのでtoLL()は共有できる。
-        const cells=j.cells.map(c=>({e:c.e, n:c.n, lat:c.lat, lon:c.lon, elev:c.elev,
-                                      dh:(c.elev!=null)?(c.elev-flatRef.elev):null}));
-        FLAT_GRID={g:j.g, cols:j.cols, rows:j.rows, en0:{e:j.eMin,n:j.nMin}, cLat, cLon, cells};
-        FLAT_GRID_SIG=sig;
-        const okCnt=cells.filter(c=>c.elev!=null).length;
-        if(prog) prog.textContent=`キャッシュ済み標高データを使用（API取得なし）：${okCnt}/${cells.length} 点`;
-        drawFlat();
-        return;
-      }
-      // 包含していない＝キャッシュの余裕を超えて動かした → 下のライブ取得へフォールバック
-    }catch(e){
-      // 取得失敗（404・ネットワークエラー・JSON不正等）→ 下のライブ取得へフォールバック
-    }
+  // 事前キャッシュ優先（SITE.elevCacheを持つ物件＝平井・negura）。loadElevCacheGrid()が「格子間隔が同じ」＋
+  // 「今の必要範囲を含んでいる」時だけ、今の敷地の座標系へ投影して必要範囲を切り出して返す。敷地の位置・角度・
+  // 倍率(siteAdj)には依存しない（2026-10-08〜。「敷地を調整」で動かしてもキャッシュの範囲内なら使える）。
+  // nullの時（範囲外・取得失敗・形式不正・elevCacheを持たない他物件）は何もせず下の通常のライブ取得へ進む
+  // （＝ライブ取得ロジック自体には手を加えていない）。
+  const cached=SITE.elevCache ? await loadElevCacheGrid(SITE.elevCache, g, cLat, cLon, eMin, eMax, nMin, nMax) : null;
+  if(cached){
+    cached.cells.forEach(c=>{ c.dh=(c.elev!=null)?(c.elev-flatRef.elev):null; });   // ライブ取得経路と同じ後処理
+    FLAT_GRID=cached;
+    FLAT_GRID_SIG=sig;
+    const okCnt=cached.cells.filter(c=>c.elev!=null).length;
+    if(prog) prog.textContent=`キャッシュ済み標高データを使用（API取得なし）：${okCnt}/${cached.cells.length} 点`;
+    drawFlat();
+    return;
   }
   // 3000点を超える広い敷地は、指定間隔のまま取るか自動で粗くするかを選べる（帯生成の確認ダイアログと同じ流儀）
   if(cols*rows>3000 &&
